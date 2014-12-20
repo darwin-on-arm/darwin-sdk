@@ -1,0 +1,16 @@
+Source: darwin-sdk
+Section: development
+Priority: optional
+Maintainer: Brian McKenzie <mckenzba@gmail.com>
+Build-Depends: debhelper (>= 8.0.0), clang-3.4, llvm-dev, uuid-dev, libssl-dev, libblocksruntime-dev, libc6-dev-i386, gcc-multilib,
+ build-essential, flex, tcsh, bison, automake, autogen, libtool
+Standards-Version: 3.9.4
+Homepage: https://github.com/darwin-on-arm
+#Vcs-Git: git://git.debian.org/collab-maint/darwin-sdk.git
+#Vcs-Browser: http://git.debian.org/?p=collab-maint/darwin-sdk.git;a=summary
+
+Package: darwin-sdk
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, clang-3.4
+Description: DarwinARM SDK base package
+ This package provides all of the basic tools needed for Darwin on ARM development.
