@@ -1,15 +1,29 @@
-TARGET=image3maker
-CFLAGS=-O2 -pipe
-CC=clang
-OBJECTS=image3maker.o
+PROG := image3maker
 
-all: $(TARGET)
+CFLAGS :=
+LFLAGS :=
 
-$(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -o $(TARGET)
+CC := $(shell which clang)
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+CFLAGS += \
+	-O2 \
+	-pipe
+
+C_SRCS := \
+	image3maker.c
+
+OBJS := \
+	$(patsubst %.c,%.o, $(filter %.c,$(C_SRCS)))
+
+%.c.o:
+	$(CC) -x c $(CFLAGS) -c $< -o $@
+
+all: $(OBJS)
+	$(CC) $(OBJS) -o $(PROG) $(LFLAGS)
+
+install: all
+	install -d $(DESTDIR)/$(DEVELOPER_DIR)/usr/bin
+	install -s -m 755 $(PROG) $(DESTDIR)/$(DEVELOPER_DIR)/usr/bin/$(PROG)
 
 clean:
-	rm -f $(TARGET) $(OBJECTS)
+	rm -f $(OBJS) $(PROG)
