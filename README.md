@@ -22,12 +22,12 @@ This package requires the following to be installed before building:
  * autogen
  * libtool
 
-NOTE: package names may vary from one distro to the next
+NOTE:  Package names may vary from one distro to the next.
 
 To build and install this package on a debian/ubuntu/mint system run the following:
 
 ```
-dpkg-buildpackage -us -cu
+dpkg-buildpackage -us -uc
 sudo dpkg -i ../darwin-sdk*.deb
 ```
 
