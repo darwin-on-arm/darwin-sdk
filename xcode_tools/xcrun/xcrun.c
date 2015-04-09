@@ -274,7 +274,7 @@ static int sdk_cfg_handler(void *user, const char *section, const char *name, co
 		config->toolchain = strdup(value);
 	else if (MATCH_INI_STON("SDK", "default_arch"))
 		config->default_arch = strdup(value);
-	else if (MATCH_INI_STON("SDK", "ios_deployment_target")) {
+	else if (MATCH_INI_STON("SDK", "iphoneos_deployment_target")) {
 		ios_deployment_target_set = 1;
 		macosx_deployment_target_set = 0;
 		config->deployment_target = strdup(value);
@@ -626,7 +626,7 @@ static int call_command(const char *cmd, int argc, char *argv[])
 	 * > HOME is used for recursive calls to xcrun (such as when xcrun calls a script calling xcrun ect).
 	 * > LD_LIBRARY_PATH is used for when tools needs to access libraries that are specific to the toolchain.
 	 * > TARGET_TRIPLE is used for clang/clang++ cross compilation when building on a foreign host.
-	 * > {MACOSX|IOS}_DEPLOYMENT_TARGET is used for tools like ld that need to set the minimum compatibility
+	 * > {MACOSX|IPHONEOS}_DEPLOYMENT_TARGET is used for tools like ld that need to set the minimum compatibility
 	 *   version number for a linked binary.
 	 */
 	envp[0] = (char *)malloc(PATH_MAX - 1);
@@ -646,8 +646,8 @@ static int call_command(const char *cmd, int argc, char *argv[])
 	else
 		fprintf(stderr, "xcrun: warning: failed to retrieve target triple information for %s.sdk.\n", current_sdk);
 
-	if ((deployment_target = getenv("IOS_DEPLOYMENT_TARGET")) != NULL)
-		sprintf(envp[5], "IOS_DEPLOYMENT_TARGET=%s", deployment_target);
+	if ((deployment_target = getenv("IPHONEOS_DEPLOYMENT_TARGET")) != NULL)
+		sprintf(envp[5], "IPHONEOS_DEPLOYMENT_TARGET=%s", deployment_target);
 	else if ((deployment_target = getenv("MACOSX_DEPLOYMENT_TARGET")) != NULL)
 		sprintf(envp[5], "MACOSX_DEPLOYMENT_TARGET=%s", deployment_target);
 	else {
@@ -656,7 +656,7 @@ static int call_command(const char *cmd, int argc, char *argv[])
 			if (macosx_deployment_target_set == 1)
 				sprintf(envp[5], "MACOSX_DEPLOYMENT_TARGET=%s", deployment_target);
 			else if (ios_deployment_target_set == 1)
-				sprintf(envp[5], "IOS_DEPLOYMENT_TARGET=%s", deployment_target);
+				sprintf(envp[5], "IPHONEOS_DEPLOYMENT_TARGET=%s", deployment_target);
 		} else {
 			fprintf(stderr, "xcrun: error: failed to retrieve deployment target information for %s.sdk.\n", current_sdk);
 			exit(1);

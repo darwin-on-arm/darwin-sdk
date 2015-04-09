@@ -76,8 +76,8 @@ xcrun is a simple utility used to locate and/or execute Developer, Toolchain, an
 	default_arch = arm		; this is the default architecture to be used for the SDK
 	toolchain = DarwinARM		; this is the specified toolchain name to be used with the SDK.
 	macosx_deployment_target = 10.7	; this is the deployment target to be used with the SDK.
-					; you can rename this variable to ios_deployment_target and set it to an appropriate iOS version
-					; (e.g.: ios_deployment_target = 4.3.5) if you are building iOS software.
+					; you can rename this variable to iphoneos_deployment_target and set it to an appropriate iOS version
+					; (e.g.: iphoneos_deployment_target = 4.3.5) if you are building iOS software.
 	```
 
   NOTE: All information written into info.ini is case-sensitive (except comments), so take extra care when writing your own.
@@ -117,12 +117,12 @@ xcrun is a simple utility used to locate and/or execute Developer, Toolchain, an
 
 	TARGET_TRIPLE			- This is set to an llvm target triple that is associated with the currently selected SDK.
 	
-	IOS_DEPLOYMENT_TARGET		- If MACOSX_DEPLOYMENT_TARGET isn't specified and this is, this will be passed to the called tool.
+	IPHONEOS_DEPLOYMENT_TARGET	- If MACOSX_DEPLOYMENT_TARGET isn't specified and this is, this will be passed to the called tool.
 	
-	MACOSX_DEPLOYMENT_TARGET	- If IOS_DEPLOYMENT_TARGET isn't specified and this is, this will be passed to the called tool.
+	MACOSX_DEPLOYMENT_TARGET	- If IPHONEOS_DEPLOYMENT_TARGET isn't specified and this is, this will be passed to the called tool.
 	```
 
-  If ```IOS_DEPLOYMENT_TARGET``` or ```MACOSX_DEPLOYMENT_TARGET``` are set in your shell, the deployment target specified by the SDK will be overridden.
+  If ```IPHONEOS_DEPLOYMENT_TARGET``` or ```MACOSX_DEPLOYMENT_TARGET``` are set in your shell, the deployment target specified by the SDK will be overridden.
   NOTE: Ensure that only one of these variables are set at a time if they are used, otherwise things may break!
 
 * How do I use this tool?
