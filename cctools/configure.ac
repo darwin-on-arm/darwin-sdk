@@ -6,15 +6,10 @@ AC_CANONICAL_TARGET
 
 AC_ARG_PROGRAM
 
-case $host_os in
-  darwin* )
-    isdarwin=yes
-    AM_CONDITIONAL([ISDARWIN], [true])
-    ;;
-  * )
-    AM_CONDITIONAL([ISDARWIN], [false])
-    ;;
-esac
+AM_CONDITIONAL([ISDARWIN], [false])
+
+isdarwin=no
+iscygwin=no
 
 if test "x$CFLAGS" = "x"; then
   CFLAGS="-O3"
@@ -28,22 +23,122 @@ if test "x$OBJCFLAGS" = "x"; then
   OBJCFLAGS="-O3"
 fi
 
-if test "x$isdarwin" = "xyes"; then
-  CXXFLAGS="$CXXFLAGS -stdlib=libc++"
-fi
-
 CXXFLAGS="$CXXFLAGS -std=c++0x"
 
 if test "x$build" = "x$host"; then
-  CC="clang"
-  CXX="clang++"
   CFLAGS="$CFLAGS -isystem /usr/local/include -isystem /usr/pkg/include"
   CXXFLAGS="$CXXFLAGS -isystem /usr/local/include -isystem /usr/pkg/include"
   LDFLAGS="$LDFLAGS -L/usr/local/lib -L/usr/pkg/lib"
 else
-  CC="`which ${host_alias}-clang 2>/dev/null || echo clang`"
-  CXX="`which ${host_alias}-clang++ 2>/dev/null || echo clang++`"
+  if test "x$CC" = "x"; then
+    CC="`which ${host_alias}-clang 2>/dev/null || echo ${host_alias}-gcc`"
+  fi
+  if test "x$CXX" = "x"; then
+    CXX="`which ${host_alias}-clang++ 2>/dev/null || echo ${host_alias}-g++`"
+  fi
 fi
+
+CWARNINGS=""
+OBJCWARNINGS=""
+CXXWARNINGS=""
+EXTRAFLAGS=""
+EXTRACXXFLAGS=""
+WARNINGS=""
+
+case $host_os in
+  darwin* )
+    isdarwin=yes
+    AM_CONDITIONAL([ISDARWIN], [true])
+  ;;
+  openbsd* )
+    if test "x$CC" = "x"; then CC="egcc"; fi
+    if test "x$CXX" = "x"; then CXX="eg++"; fi
+  ;;
+  cygwin* )
+    iscygwin=yes
+    EXTRAFLAGS="-D__LARGE64_FILES -fno-PIC"
+    WARNINGS="-Wno-attributes"
+    if test "x$CC" = "x"; then CC="gcc"; fi
+    if test "x$CXX" = "x"; then CXX="g++"; fi
+  ;;
+esac
+
+if test "x$CC" = "x"; then
+  which clang 2>/dev/null 1>&2
+  if test $? -eq 0; then
+    CC="clang"
+  else
+    CC="gcc"
+  fi
+fi
+
+if test "x$CXX" = "x"; then
+  which clang++ 2>/dev/null 1>&2
+  if test $? -eq 0; then
+    CXX="clang++"
+  else
+    CXX="g++"
+  fi
+fi
+
+case "`$CC --version`" in
+  *clang* )
+    WARNINGS="$WARNINGS -Wall -Wno-long-long -Wno-import -Wno-format -Wno-deprecated -Wno-unused-variable"
+    WARNINGS="$WARNINGS -Wno-unused-private-field -Wno-unused-function -Wno-invalid-offsetof"
+    WARNINGS="$WARNINGS -Wno-int-conversion -Wno-char-subscripts"
+    OBJCWARNINGS="-Wall -Wno-objc-root-class -Wno-deprecated-objc-isa-usage"
+  ;;
+  * )
+    WARNINGS="$WARNINGS -Wall -Wno-format -Wno-enum-compare -Wno-unused-result -Wno-unused-variable"
+    WARNINGS="$WARNINGS -Wno-unused-but-set-variable -Wno-deprecated -Wno-deprecated-declarations"
+    WARNINGS="$WARNINGS -Wno-char-subscripts -Wno-strict-aliasing"
+    OBJCWARNINGS="-Wall"
+    CFLAGS="$CFLAGS -std=gnu99 -D__private_extern__="
+    CXXFLAGS="$CXXFLAGS -D__private_extern__="
+  ;;
+esac
+
+case "`$CXX --version`" in
+  *clang* )
+    if test "x$isdarwin" = "xyes"; then
+      CXXFLAGS="$CXXFLAGS -stdlib=libc++"
+    fi
+    # can't use -fblocks on cyggwin due to a clang driver bug
+    if test "x$iscygwin" = "xno"; then
+      EXTRACXXFLAGS="$EXTRACXXFLAGS -fblocks"
+    else
+      EXTRAFLAGS="$EXTRAFLAGS -integrated-as"
+    fi
+  ;;
+esac
+
+case $host_cpu in
+  powerpc)
+    EXTRAFLAGS="$EXTRAFLAGS -D__ppc__"
+  ;;
+  powerpc64*)
+    EXTRAFLAGS="$EXTRAFLAGS -D__ppc__ -D__ppc64__"
+  ;;
+  arm64*|aarch64)
+    EXTRAFLAGS="$EXTRAFLAGS -D__arm64__"
+  ;;
+  arm*)
+    EXTRAFLAGS="$EXTRAFLAGS -D__arm__"
+  ;;
+esac
+
+if test "x$EXTRAFLAGS" != "x"; then
+  CFLAGS="$CFLAGS $EXTRAFLAGS"
+  OBJCFLAGS="$OBJCFLAGS $EXTRAFLAGS"
+  CXXFLAGS="$CXXFLAGS $EXTRAFLAGS"
+fi
+
+if test "xEXTRACXXFLAGS" != "x"; then
+  CXXFLAGS="$CXXFLAGS $EXTRACXXFLAGS"
+fi
+
+AC_SUBST([WARNINGS], [$WARNINGS])
+AC_SUBST([OBJCWARNINGS], [$OBJCWARNINGS])
 
 CPP="$CC -E"
 OBJC="$CC"
@@ -82,13 +177,14 @@ fi
 
 AC_CHECK_HEADERS([uuid/uuid.h], [], [AC_MSG_ERROR([*** uuid.h not found, please install uuid dev packages according to your system])])
 
+
 #for libstuff emulated.c
 case $target_cpu in
      powerpc)
         AC_DEFINE(EMULATED_HOST_CPU_TYPE, 18, [Emulated CPU type])
         AC_DEFINE(EMULATED_HOST_CPU_SUBTYPE, 100, [Emulated CPU subtype])
     ;;
-     powerpc64)
+     powerpc64*)
         AC_DEFINE(EMULATED_HOST_CPU_TYPE, 16777234, [Emulated CPU type])
         AC_DEFINE(EMULATED_HOST_CPU_SUBTYPE, 0, [Emulated CPU subtype])
        ;;
@@ -100,7 +196,7 @@ case $target_cpu in
         AC_DEFINE(EMULATED_HOST_CPU_TYPE, 16777223, [Emulated CPU type])
         AC_DEFINE(EMULATED_HOST_CPU_SUBTYPE, 3, [Emulated CPU subtype])
     ;;
-     arm64*)
+     arm64*|aarch64)
         AC_DEFINE(EMULATED_HOST_CPU_TYPE, 16777228, [Emulated CPU type])
         AC_DEFINE(EMULATED_HOST_CPU_SUBTYPE, 0, [Emulated CPU subtype])
     ;;
@@ -123,160 +219,8 @@ AC_SUBST([ASLIBEXECDIR], ['${libexecdir}/as'])
 
 # set PROGRAM PREFIX
 if test "$target_alias"; then
-AC_SUBST([PROGRAM_PREFIX], ['${target_alias}-'])
+  AC_SUBST([PROGRAM_PREFIX], ['${target_alias}-'])
 fi
-
-# disable certain warnings.
-
-WARNINGS=""
-OBJCWARNINGS=""
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wall"
-AC_MSG_CHECKING([if -Wall is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wall"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-long-long"
-AC_MSG_CHECKING([if -Wno-long-long is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wno-long-long"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-import"
-AC_MSG_CHECKING([if -Wno-import is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wno-import"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-format"
-AC_MSG_CHECKING([if -Wno-format is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wno-format"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-deprecated"
-AC_MSG_CHECKING([if -Wno-deprecated is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wno-deprecated"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-unused-variable"
-AC_MSG_CHECKING([if -Wno-unused-variable is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wno-unused-variable"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-unused-private-field"
-AC_MSG_CHECKING([if -Wno-unused-private-field is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wno-unused-private-field"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-unused-function"
-AC_MSG_CHECKING([if -Wno-unused-function is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wno-unused-function"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-invalid-offsetof"
-AC_MSG_CHECKING([if -Wno-invalid-offsetof is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wno-invalid-offsetof"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-int-conversion"
-AC_MSG_CHECKING([if -Wno-int-conversion is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wno-int-conversion"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-char-subscripts"
-AC_MSG_CHECKING([if -Wno-char-subscripts is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [WARNINGS="$WARNINGS -Wno-char-subscripts"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-objc-root-class"
-AC_MSG_CHECKING([if -Wno-objc-root-class is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [OBJCWARNINGS="$OBJCWARNINGS -Wno-objc-root-class"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-ORIGCFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-deprecated-objc-isa-usage"
-AC_MSG_CHECKING([if -Wno-deprecated-objc-isa-usage is supported])
-AC_COMPILE_IFELSE(
-   [AC_LANG_SOURCE([[const char hw[] = "Hello, World\n";]])],
-   [OBJCWARNINGS="$OBJCWARNINGS -Wno-deprecated-objc-isa-usage"
-    AC_MSG_RESULT([yes])],
-   [AC_MSG_RESULT([no])]
-)
-CFLAGS=$ORIGCFLAGS
-
-AC_SUBST([WARNINGS], [$WARNINGS])
-AC_SUBST([OBJCWARNINGS], [$OBJCWARNINGS])
 
 AC_CHECK_LIB([dl],[dlopen],[DL_LIB=-ldl])
 AC_SUBST(DL_LIB)
@@ -284,16 +228,23 @@ AC_SUBST(DL_LIB)
 AC_CHECK_LIB([pthread],[pthread_create],[PTHREAD_FLAGS=-pthread])
 AC_SUBST(PTHREAD_FLAGS)
 
-AC_CHECK_LIB([uuid],[uuid_generate_random],[UUID_LIB=-luuid])
-AC_SUBST(UUID_LIB)
+if test "x$isdarwin" = "xno"; then
+  AC_CHECK_LIB([uuid],[uuid_generate_random],[UUID_LIB=-luuid],[exit 1])
+  AC_SUBST(UUID_LIB)
+fi
+
+AC_CHECK_LIB([execinfo],[backtrace],[DL_LIB=-lexecinfo])
+AC_SUBST(EXECINFO_LIB)
 
 AC_CHECK_FUNCS([strmode])
 
 ### Check for __cxa_demangle in various C++ ABI libs ###
 
 AC_CHECK_LIB([c++abi],[__cxa_demangle],[CXXABI_LIB=-lc++abi],[
-  AC_CHECK_LIB([supc++],[__cxa_demangle],[CXXABI_LIB=-lsupc++],[
-    AC_CHECK_LIB([stdc++],[__cxa_demangle],[CXXABI_LIB=-lstdc++],[exit 1])
+  AC_CHECK_LIB([c++],[__cxa_demangle],[CXXABI_LIB=-lc++],[
+    AC_CHECK_LIB([supc++],[__cxa_demangle],[CXXABI_LIB=-lsupc++],[
+      AC_CHECK_LIB([stdc++],[__cxa_demangle],[CXXABI_LIB=-lstdc++],[exit 1])
+    ])
   ])
 ])
 
@@ -313,6 +264,8 @@ AC_LINK_IFELSE(
 LDFLAGS=$ORIGLDFLAGS
 
 CHECK_LLVM
+
+LDFLAGS="$LDFLAGS $LTO_RPATH"
 
 ### Check endianness ###
 

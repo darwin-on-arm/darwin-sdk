@@ -227,6 +227,7 @@ ld::File* InputFiles::makeFile(const Options::FileInfo& info, bool indirectDylib
 	bool isFatFile = false;
 	uint32_t sliceToUse, sliceCount;
 	const fat_header* fh = (fat_header*)p;
+        sliceCount = 0; // ld64-port
 	if ( fh->magic == OSSwapBigToHostInt32(FAT_MAGIC) ) {
 		isFatFile = true;
 		const struct fat_arch* archs = (struct fat_arch*)(p + sizeof(struct fat_header));
@@ -270,6 +271,8 @@ ld::File* InputFiles::makeFile(const Options::FileInfo& info, bool indirectDylib
 				}
 			}
 			// if requested architecture is page aligned within fat file, then remap just that portion of file
+			// ld64-port: remapping the file on Cygwin fails for an unknown reason, so always go the alternative way there
+#ifndef __CYGWIN__
 			if ( (fileOffset & 0x00000FFF) == 0 ) {
 				// unmap whole file
 				munmap((caddr_t)p, info.fileLen);
@@ -279,8 +282,11 @@ ld::File* InputFiles::makeFile(const Options::FileInfo& info, bool indirectDylib
 					throwf("can't re-map file, errno=%d", errno);
 			}
 			else {
+#endif /* __CYGWIN__ */
 				p = &p[fileOffset];
+#ifndef __CYGWIN__
 			}
+#endif /* __CYGWIN__ */
 		}
 	}
 	::close(fd);
@@ -807,9 +813,13 @@ void InputFiles::inferArchitecture(Options& opts, const char** archName)
 	opts.setArchitecture(CPU_TYPE_I386, CPU_SUBTYPE_X86_ALL);
 #elif __x86_64__
 	opts.setArchitecture(CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_ALL);
+#elif __ppc__ // ld64-port
+    opts.setArchitecture(CPU_TYPE_POWERPC, CPU_SUBTYPE_POWERPC_ALL);
+#elif __ppc64__ // ld64-port
+    opts.setArchitecture(CPU_TYPE_POWERPC64, CPU_SUBTYPE_POWERPC_ALL);
 #elif __arm__
 	opts.setArchitecture(CPU_TYPE_ARM, CPU_SUBTYPE_ARM_V6);
-#elif __arm64__
+#elif __arm64__ // ld64-port
 	opts.setArchitecture(CPU_TYPE_ARM, CPU_SUBTYPE_ARM64_ALL);
 #else
 	#error unknown default architecture

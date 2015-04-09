@@ -1,16 +1,21 @@
 bin_PROGRAMS = otool
 
 if ISDARWIN
-otool_LDADD = $(top_srcdir)/libstuff/libstuff.la
-otool_LDFLAGS = $(PTHREAD_FLAGS) $(CXXABI_LIB) $(DL_LIB) -lobjc
+otool_LDADD = \
+$(top_srcdir)/libstuff/libstuff.la \
+$(PTHREAD_FLAGS) $(CXXABI_LIB) $(DL_LIB) -lobjc
 else
 otool_LDADD = \
 $(top_srcdir)/libstuff/libstuff.la \
-$(top_srcdir)/libobjc2/libobjc.la
-otool_LDFLAGS = $(PTHREAD_FLAGS) $(CXXABI_LIB) $(DL_LIB)
+$(top_srcdir)/libobjc2/libobjc.la \
+$(PTHREAD_FLAGS) $(CXXABI_LIB) $(DL_LIB)
 endif
 
+if ISDARWIN
+otool_CFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/include/foreign -I$(top_srcdir)/libstuff $(WARNINGS) $(LTO_DEF) -D_DARWIN_C_SOURCE -D__DARWIN_UNIX03 $(ENDIAN_FLAG) -DOTOOL
+else
 otool_CFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/include/foreign -I$(top_srcdir)/libstuff -I$(top_srcdir)/libobjc2 $(WARNINGS) $(LTO_DEF) -D_DARWIN_C_SOURCE -D__DARWIN_UNIX03 $(ENDIAN_FLAG) -DOTOOL
+endif
 
 otool_SOURCES =  \
 	main.c \

@@ -1,3 +1,9 @@
+darwin-sdk (1.1) unstable; urgency=medium
+
+  * Update cctools to latest upstream port, update xcode_tools to reflect changes in clang.
+
+ -- Brian McKenzie <mckenzba@gmail.com>  Thu, 09 Apr 2015 18:55:46 -0400
+
 darwin-sdk (1.0) unstable; urgency=low
 
   * Initial Release.

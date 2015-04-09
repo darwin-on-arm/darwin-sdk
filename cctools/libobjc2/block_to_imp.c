@@ -40,7 +40,9 @@ void __clear_cache(void* start, void* end);
 #include <nbutil.h>
 #endif
 
+#ifndef PAGE_SIZE // cctools-ports
 #define PAGE_SIZE 4096
+#endif
 
 static void *executeBuffer;
 static void *writeBuffer;
@@ -106,13 +108,23 @@ static struct wx_buffer alloc_buffer(size_t size)
 	return b;
 }
 
-extern void __objc_block_trampoline;
-extern void __objc_block_trampoline_end;
-extern void __objc_block_trampoline_sret;
-extern void __objc_block_trampoline_end_sret;
+// cctools-port void -> char []
+extern char __objc_block_trampoline[];
+extern char __objc_block_trampoline_end[];
+extern char __objc_block_trampoline_sret[];
+extern char __objc_block_trampoline_end_sret[];
 
 IMP imp_implementationWithBlock(void *block)
 {
+#ifdef __CYGWIN__
+	/*
+	 * Cygwin can't deal with this function, so just call
+	 * abort() to make the following code unreachable in order
+	 * to avoid linker errors.
+	 */
+	fprintf(stderr, "imp_implementationWithBlock() not implemented\n");
+	abort();
+#endif /* __CYGWIN__ */
 	struct Block_layout *b = block;
 	void *start;
 	void *end;
