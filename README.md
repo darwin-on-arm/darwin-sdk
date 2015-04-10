@@ -21,6 +21,7 @@ This package requires the following to be installed before building:
  * automake
  * autogen
  * libtool
+ * perl
 
 NOTE:  Package names may vary from one distro to the next.
 
