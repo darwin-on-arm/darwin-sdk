@@ -3,7 +3,7 @@ Section: development
 Priority: optional
 Maintainer: Brian McKenzie <mckenzba@gmail.com>
 Build-Depends: debhelper (>= 8.0.0), clang-3.4, llvm-dev, uuid-dev, libssl-dev, libblocksruntime-dev, libc6-dev-i386, gcc-multilib,
- build-essential, flex, tcsh, bison, automake, autogen, libtool
+ build-essential, flex, tcsh, bison, automake, autogen, libtool, libdb-dev
 Standards-Version: 3.9.4
 Homepage: https://github.com/darwin-on-arm
 #Vcs-Git: git://git.debian.org/collab-maint/darwin-sdk.git

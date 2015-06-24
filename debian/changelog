@@ -1,3 +1,9 @@
+darwin-sdk (1.1.2) unstable; urgency=medium
+
+  * Add libdb-dev to build dependencies. Some systems lack db.h, which is needed by cctools.
+
+ -- Brian McKenzie <mckenzba@gmail.com>  Wed, 24 Jun 2015 18:12:04 -0400
+
 darwin-sdk (1.1.1) unstable; urgency=medium
 
   * Add AvailabilityVersions to SDK.
