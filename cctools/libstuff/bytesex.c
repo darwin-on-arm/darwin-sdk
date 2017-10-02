@@ -209,6 +209,8 @@
 #include <mach-o/nlist.h>
 #include <mach-o/reloc.h>
 #include <mach-o/ranlib.h>
+#include "../include/xar/xar.h" /* cctools-port: 
+				   force the use of the bundled xar header */
 #include "stuff/bool.h"
 #include "stuff/bytesex.h"
 
@@ -320,6 +322,29 @@ enum byte_sex target_byte_sex)
 	    fat_archs[i].offset     = SWAP_INT(fat_archs[i].offset);
 	    fat_archs[i].size       = SWAP_INT(fat_archs[i].size);
 	    fat_archs[i].align      = SWAP_INT(fat_archs[i].align);
+	}
+}
+
+__private_extern__
+void
+swap_fat_arch_64(
+struct fat_arch_64 *fat_archs64,
+uint32_t nfat_arch,
+enum byte_sex target_byte_sex)
+{
+    uint32_t i;
+#ifdef __MWERKS__
+    enum byte_sex dummy;
+        dummy = target_byte_sex;
+#endif
+
+	for(i = 0; i < nfat_arch; i++){
+	    fat_archs64[i].cputype    = SWAP_INT(fat_archs64[i].cputype);
+	    fat_archs64[i].cpusubtype = SWAP_INT(fat_archs64[i].cpusubtype);
+	    fat_archs64[i].offset     = SWAP_LONG_LONG(fat_archs64[i].offset);
+	    fat_archs64[i].size       = SWAP_LONG_LONG(fat_archs64[i].size);
+	    fat_archs64[i].align      = SWAP_INT(fat_archs64[i].align);
+	    fat_archs64[i].reserved   = SWAP_INT(fat_archs64[i].reserved);
 	}
 }
 
@@ -2699,6 +2724,22 @@ enum byte_sex target_byte_sex)
 
 __private_extern__
 void
+swap_ranlib_64(
+struct ranlib_64 *ranlibs,
+uint64_t nranlibs,
+enum byte_sex target_byte_sex)
+{
+    uint64_t i;
+
+	for(i = 0; i < nranlibs; i++){
+	    ranlibs[i].ran_un.ran_strx =
+		SWAP_LONG_LONG(ranlibs[i].ran_un.ran_strx);
+	    ranlibs[i].ran_off = SWAP_LONG_LONG(ranlibs[i].ran_off);
+	}
+}
+
+__private_extern__
+void
 swap_relocation_info(
 struct relocation_info *relocs,
 uint32_t nrelocs,
@@ -2908,4 +2949,19 @@ enum byte_sex target_byte_sex)
 	    tocs[i].symbol_index = SWAP_INT(tocs[i].symbol_index);
 	    tocs[i].module_index = SWAP_INT(tocs[i].module_index);
 	}
+}
+
+__private_extern__
+void
+swap_xar_header(
+struct xar_header *xar,
+enum byte_sex target_byte_sex)
+{
+	xar->magic = SWAP_INT(xar->magic);
+	xar->size = SWAP_SHORT(xar->size);
+	xar->version = SWAP_SHORT(xar->version);
+	xar->toc_length_compressed = SWAP_LONG_LONG(xar->toc_length_compressed);
+	xar->toc_length_uncompressed =
+				SWAP_LONG_LONG(xar->toc_length_uncompressed);
+	xar->cksum_alg = SWAP_INT(xar->cksum_alg);
 }

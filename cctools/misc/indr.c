@@ -352,7 +352,7 @@ char *envp[])
 	if(stat(input_file, &stat_buf) == -1)
 	    system_error("can't stat input file: %s", input_file);
 	writeout(archs, narchs, output_file, stat_buf.st_mode & 0777, TRUE,
-		 FALSE, FALSE, NULL);
+		 FALSE, FALSE, FALSE, NULL);
 
 	if(errors)
 	    return(EXIT_FAILURE);
@@ -451,6 +451,8 @@ enum bool nflag)
     struct arch_flag host_arch_flag;
     enum bool arch_process, any_processing, *arch_flag_processed;
     char *list_filename;
+    struct ar_hdr h;
+    char size_buf[sizeof(h.ar_size) + 1];
 
 	arch_flag_processed = NULL;
 	/*
@@ -479,6 +481,10 @@ enum bool nflag)
 	    else if(archs[i].type == OFILE_Mach_O){
 		cputype = archs[i].object->mh_cputype;
 		cpusubtype = archs[i].object->mh_cpusubtype;
+	    }
+	    else if(archs[i].fat_arch64 != NULL){
+		cputype = archs[i].fat_arch64->cputype;
+		cpusubtype = archs[i].fat_arch64->cpusubtype;
 	    }
 	    else if(archs[i].fat_arch != NULL){
 		cputype = archs[i].fat_arch->cputype;
@@ -547,38 +553,18 @@ enum bool nflag)
 			archs[i].toc_long_name = TRUE;
 		    }
 		    if(archs[i].members[j].object != NULL){
-			char tmp[32]; /* cctools-port */
-			int len;      /* cctools-port */
 			size += archs[i].members[j].object->object_size
 			   - archs[i].members[j].object->input_sym_info_size
 			   + archs[i].members[j].object->output_sym_info_size;
-#if 0
-			/*
-			 * cctools-port: This causes a crash with
-			 * -D_FORTIFY_SOURCE enabled ('\0' "overflows" the
-			 * buffer).
-			 */
-			sprintf(archs[i].members[j].ar_hdr->ar_size, "%-*ld",
-			       (int)sizeof(archs[i].members[j].ar_hdr->ar_size),
-			       (long)(size));
-#endif
-			/* cctools-port start */
-			len = sprintf(tmp, "%-*ld",
-			       (int)sizeof(archs[i].members[j].ar_hdr->ar_size),
-			       (long)(size));
-			if(len !=
-			  (int)sizeof(archs[i].members[j].ar_hdr->ar_size)){
-			    fprintf(stderr, "corrupted object file\n");
-			    abort();
-			}
-			memcpy(&archs[i].members[j].ar_hdr->ar_size, tmp, len);
-			/* cctools-port end */
+			sprintf(size_buf, "%-*ld",
+			   (int)sizeof(archs[i].members[j].ar_hdr->ar_size),
+			   (long)(size));
 			/*
 			 * This has to be done by hand because sprintf puts a
 			 * null at the end of the buffer.
 			 */
-			memcpy(archs[i].members[j].ar_hdr->ar_fmag, ARFMAG,
-			      (int)sizeof(archs[i].members[j].ar_hdr->ar_fmag));
+			memcpy(archs[i].members[j].ar_hdr->ar_size, size_buf,
+			   (int)sizeof(archs[i].members[j].ar_hdr->ar_size));
 		    }
 		    else{
 			size += archs[i].members[j].unknown_size;

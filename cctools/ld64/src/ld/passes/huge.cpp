@@ -30,6 +30,7 @@
 #include <mach/machine.h>
 
 #include <vector>
+#include <map>
 
 #include "ld.hpp"
 #include "huge.h"
@@ -46,10 +47,53 @@ public:
 	}
 };
 
+class DataPadAtom : public ld::Atom {
+public:
+											DataPadAtom(ld::Internal& state)
+											: ld::Atom(_s_section, ld::Atom::definitionRegular, ld::Atom::combineNever,
+														ld::Atom::scopeTranslationUnit, ld::Atom::typeUnclassified,
+														symbolTableNotIn, false, false, false, ld::Atom::Alignment(3))
+											{ state.addAtom(*this); }
+
+
+	virtual const ld::File*					file() const					{ return NULL; }
+	virtual const char*						name() const					{ return "padding"; }
+	virtual uint64_t						size() const					{ return 8; }
+	virtual uint64_t						objectAddress() const			{ return 0; }
+	virtual void							copyRawContent(uint8_t buffer[]) const { }
+
+protected:
+	virtual									~DataPadAtom() {}
+
+	static ld::Section						_s_section;
+};
+
+ld::Section DataPadAtom::_s_section("__DATA", "__data", ld::Section::typeUnclassified);
+
+
 void doPass(const Options& opts, ld::Internal& state)
 {
 	const bool log = false;
-	
+
+	// <rdar://problem/26015603> add __data section if __DATA segment was gutted by dirty data removal
+	if ( (opts.outputKind() == Options::kDynamicLibrary) && opts.useDataConstSegment() && opts.hasDataSymbolMoves() ) {
+		uint64_t dataAtomsSize = 0;
+		bool foundSegmentDATA_DIRTY = false;
+		for (ld::Internal::FinalSection* sect : state.sections) {
+			if ( strcmp(sect->segmentName(), "__DATA") == 0 ) {
+				for (const ld::Atom* atom : sect->atoms) {
+					dataAtomsSize += atom->size();
+				}
+			}
+			else if ( strcmp(sect->segmentName(), "__DATA_DIRTY") == 0 ) {
+				foundSegmentDATA_DIRTY = true;
+			}
+		}
+		if ( foundSegmentDATA_DIRTY && (dataAtomsSize == 0) ) {
+			new DataPadAtom(state);
+		}
+	}
+
 	// only make make __huge section in final linked images
 	if ( opts.outputKind() == Options::kObjectFile )
 		return;
@@ -94,6 +138,7 @@ void doPass(const Options& opts, ld::Internal& state)
 				const ld::Atom* atom = *ait;
 				if ( atom->size() > 1024*1024 ) {
 					hugeSection->atoms.push_back(atom);
+					state.atomToSection[atom] = hugeSection;
 					if (log) fprintf(stderr, "moved to __huge: %s, size=%llu\n", atom->name(), atom->size());
 					*ait = NULL;  // change atom to NULL for later bulk removal
 					movedSome = true;

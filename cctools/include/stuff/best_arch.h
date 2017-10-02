@@ -28,6 +28,23 @@
 #include <stuff/bool.h>
 
 /*
+ * cpusubtype_findbestarch_64() is passed a cputype and cpusubtype and a set of
+ * fat_arch_64 structs and selects the best one that matches (if any) and
+ * returns a pointer to that fat_arch_64 struct (or NULL).  The fat_arch_64
+ * structs must be in the host byte sex and correct such that the fat_archs64
+ * really points to enough memory for nfat_arch_64 structs.  It is possible
+ * that this routine could fail if new cputypes or cpusubtypes are added and an
+ * old version of this routine is used.  But if there is an exact match between
+ * the cputype and cpusubtype and one of the fat_arch_64 structs this routine
+ * will always succeed.
+ */
+__private_extern__ struct fat_arch_64 * cpusubtype_findbestarch_64(
+    cpu_type_t cputype,
+    cpu_subtype_t cpusubtype,
+    struct fat_arch_64 *fat_archs64,
+    uint32_t nfat_archs);
+
+/*
  * cpusubtype_findbestarch() is passed a cputype and cpusubtype and a set of
  * fat_arch structs and selects the best one that matches (if any) and returns
  * a pointer to that fat_arch struct (or NULL).  The fat_arch structs must be
@@ -37,7 +54,7 @@
  * routine is used.  But if there is an exact match between the cputype and
  * cpusubtype and one of the fat_arch structs this routine will always succeed.
  */
-extern struct fat_arch * cpusubtype_findbestarch(
+__private_extern__ struct fat_arch * cpusubtype_findbestarch(
     cpu_type_t cputype,
     cpu_subtype_t cpusubtype,
     struct fat_arch *fat_archs,
@@ -52,7 +69,7 @@ extern struct fat_arch * cpusubtype_findbestarch(
  * this routine is used.  But if the cpusubtypes are the same they can always
  * be combined and this routine will return the cpusubtype pass in.
  */
-extern cpu_subtype_t cpusubtype_combine(
+__private_extern__ cpu_subtype_t cpusubtype_combine(
     cpu_type_t cputype,
     cpu_subtype_t cpusubtype1,
     cpu_subtype_t cpusubtype2);
@@ -66,7 +83,7 @@ extern cpu_subtype_t cpusubtype_combine(
  * is used.  But if the cpusubtypes are the same they can always be executed
  * and this routine will return TRUE.
  */
-extern enum bool cpusubtype_execute(
+__private_extern__ enum bool cpusubtype_execute(
     cpu_type_t host_cputype,
     cpu_subtype_t host_cpusubtype, /* can NOT be the ALL type */
     cpu_subtype_t exec_cpusubtype);/* can be the ALL type */

@@ -403,7 +403,7 @@ private:
 // silence a false positive uninitialized variable warning:
 // warning: '*((void*)& picker +24)' may be used uninitialized in this function
 //
-#ifndef __clang__
+#if !defined(__clang__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7))
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 #endif
@@ -417,7 +417,6 @@ bool SymbolTable::addByName(const ld::Atom& newAtom, bool ignoreDuplicates)
 	const ld::Atom* existingAtom = _indirectBindingTable[slot];
 	//fprintf(stderr, "addByName(%p) name=%s, slot=%u, existing=%p\n", &newAtom, newAtom.name(), slot, existingAtom);
 	if ( existingAtom != NULL ) {
-
 		assert(&newAtom != existingAtom);
 		NameCollisionResolution picker(newAtom, *existingAtom, ignoreDuplicates, _options);
 		if (picker.reportDuplicate()) {
@@ -444,7 +443,8 @@ bool SymbolTable::addByName(const ld::Atom& newAtom, bool ignoreDuplicates)
 	return useNew && (existingAtom != NULL);
 }
 
-#ifndef __clang__
+// ld64-port
+#if !defined(__clang__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7))
 #pragma GCC diagnostic pop
 #endif
 
@@ -577,6 +577,18 @@ void SymbolTable::tentativeDefs(std::vector<const char*>& tents)
 			tents.push_back(name);
 	}
 	std::sort(tents.begin(), tents.end());
+}
+
+
+void SymbolTable::mustPreserveForBitcode(std::unordered_set<const char*>& syms)
+{
+	// return all names in _byNameTable that have no associated atom
+	for (const auto &entry: _byNameTable) {
+		const char* name = entry.first;
+		const ld::Atom* atom = _indirectBindingTable[entry.second];
+		if ( (atom == NULL) || (atom->definition() == ld::Atom::definitionProxy) )
+			syms.insert(name);
+	}
 }
 
 
@@ -826,6 +838,15 @@ SymbolTable::IndirectBindingSlot SymbolTable::findSlotForReferences(const ld::At
 			}
 			slot = _indirectBindingTable.size();
 			_pointerToCStringTable[atom] = slot;
+			break;
+		case ld::Section::typeTLVPointers:
+			pos = _threadPointerTable.find(atom);
+			if ( pos != _threadPointerTable.end() ) {
+				*existingAtom = _indirectBindingTable[pos->second];
+				return pos->second;
+			}
+			slot = _indirectBindingTable.size();
+			_threadPointerTable[atom] = slot;
 			break;
 		default:
 			assert(0 && "section type does not support coalescing by references");

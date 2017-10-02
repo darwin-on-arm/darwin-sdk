@@ -1,4 +1,4 @@
-const char ldVersionString[] = "241.9\n";
+const char ldVersionString[] = "@(#)PROGRAM:ld  PROJECT:ld64-274.2\n";
 
 #ifndef __APPLE__
 
@@ -17,9 +17,15 @@ const char ldVersionString[] = "241.9\n";
 #include <mach/host_info.h>
 #include <sys/time.h>
 #include <assert.h>
- 
-#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+
+#if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
 #include <sys/sysctl.h>
+#endif
+
+#ifdef __OpenBSD__
+#include <sys/types.h>
+#include <sys/user.h>
+#include <sys/stat.h>
 #endif
 
 #include "helper.h"
@@ -35,27 +41,81 @@ void __assert_rtn(const char *func, const char *file, int line, const char *msg)
 #endif /* __FreeBSD__ */
 }
 
-int _NSGetExecutablePath(char *path, unsigned int *size)
+int _NSGetExecutablePath(char *epath, unsigned int *size)
 {
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || defined(__DragonFly__)
     int mib[4];
     mib[0] = CTL_KERN;
     mib[1] = KERN_PROC;
     mib[2] = KERN_PROC_PATHNAME;
     mib[3] = -1;
     size_t cb = *size;
-    if (sysctl(mib, 4, path, &cb, NULL, 0) != 0)
+    if (sysctl(mib, 4, epath, &cb, NULL, 0) != 0)
         return -1;
     *size = cb;
     return 0;
-    #else
+#elif defined(__OpenBSD__)
+    int mib[4];
+    char **argv;
+    size_t len;
+    const char *comm;
+    int ok = 0;
+    mib[0] = CTL_KERN;
+    mib[1] = KERN_PROC_ARGS;
+    mib[2] = getpid();
+    mib[3] = KERN_PROC_ARGV;
+    if (sysctl(mib, 4, NULL, &len, NULL, 0) < 0)
+        abort();
+    if (!(argv = malloc(len)))
+        abort();
+    if (sysctl(mib, 4, argv, &len, NULL, 0) < 0)
+        abort();
+    comm = argv[0];
+    if (*comm == '/' || *comm == '.')
+    {
+        char *rpath;
+        if ((rpath = realpath(comm, NULL)))
+        {
+          strlcpy(epath, rpath, *size);
+          free(rpath);
+          ok = 1;
+        }
+    }
+    else
+    {
+        char *sp;
+        char *xpath = strdup(getenv("PATH"));
+        char *path = strtok_r(xpath, ":", &sp);
+        struct stat st;
+        if (!xpath)
+            abort();
+        while (path)
+        {
+            snprintf(epath, *size, "%s/%s", path, comm);
+            if (!stat(epath, &st) && (st.st_mode & S_IXUSR))
+            {
+                ok = 1;
+                break;
+            }
+            path = strtok_r(NULL, ":", &sp);
+        }
+        free(xpath);
+    }
+    free(argv);
+    if (ok)
+    {
+        *size = strlen(epath);
+        return 0;
+    }
+    return -1;
+#else
     int bufsize = *size;
     int ret_size;
-    ret_size = readlink("/proc/self/exe", path, bufsize-1);
+    ret_size = readlink("/proc/self/exe", epath, bufsize-1);
     if (ret_size != -1)
     {
         *size = ret_size;
-        path[ret_size]=0;
+        epath[ret_size]=0;
         return 0;
     }
     else
@@ -63,7 +123,7 @@ int _NSGetExecutablePath(char *path, unsigned int *size)
 #endif
 }
 
-int _dyld_find_unwind_sections(void* i, struct dyld_unwind_sections* sec)
+int _dyld_find_unwind_sections(void *i, struct dyld_unwind_sections* sec)
 {
     return 0;
 }
@@ -73,23 +133,24 @@ mach_port_t mach_host_self(void)
     return 0;
 }
 
-kern_return_t host_statistics ( host_t host_priv, host_flavor_t flavor, host_info_t host_info_out, mach_msg_type_number_t *host_info_outCnt)
+kern_return_t host_statistics(host_t host_priv, host_flavor_t flavor,
+                              host_info_t host_info_out,
+                              mach_msg_type_number_t *host_info_outCnt)
 {
     return ENOTSUP;
 }
 
-uint64_t  mach_absolute_time(void)
+uint64_t mach_absolute_time(void)
 {
-    uint64_t t = 0;
     struct timeval tv;
-    if (gettimeofday(&tv,NULL)) return t;
-    t = ((uint64_t)tv.tv_sec << 32)  | tv.tv_usec;
-    return t;
+    if (gettimeofday(&tv, NULL))
+      return 0;
+    return (tv.tv_sec*1000000ULL)+tv.tv_usec;
 }
 
-kern_return_t     mach_timebase_info( mach_timebase_info_t info)
+kern_return_t mach_timebase_info(mach_timebase_info_t info)
 {
-    info->numer = 1;
+    info->numer = 1000;
     info->denom = 1;
     return 0;
 }

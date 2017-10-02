@@ -72,7 +72,7 @@ public:
 		
 		void				resolve();
 
-	
+
 private:
 	struct WhyLiveBackChain
 	{
@@ -102,6 +102,7 @@ private:
 	void					remainingUndefines(std::vector<const char*>&);
 	bool					printReferencedBy(const char* name, SymbolTable::IndirectBindingSlot slot);
 	void					tweakWeakness();
+	void					buildArchivesList();
 	void					doLinkerOption(const std::vector<const char*>& linkerOption, const char* fileName);
 	void					dumpAtoms();
 
@@ -126,6 +127,7 @@ private:
 	ld::Internal&					_internal;
 	std::vector<const ld::Atom*>	_atoms;
 	std::set<const ld::Atom*>		_deadStripRoots;
+	std::vector<const ld::Atom*>	_dontDeadStripIfReferencesLive;
 	std::vector<const ld::Atom*>	_atomsWithUnresolvedReferences;
 	std::vector<const class AliasAtom*>	_aliasesFromCmdLine;
 	SymbolTable						_symbolTable;

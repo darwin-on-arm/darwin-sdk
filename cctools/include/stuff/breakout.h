@@ -24,7 +24,7 @@
 #define __private_extern__ __declspec(private_extern)
 #endif
 
-#include "stuff/ofile.h"
+#import "stuff/ofile.h"
 
 /*
  * This is used to build the table of contents of an archive.  Each toc_entry
@@ -36,7 +36,7 @@
  */
 struct toc_entry {
     char *symbol_name;
-    int32_t member_index;
+    int64_t member_index;
 };
 
 /*
@@ -50,9 +50,10 @@ struct arch {
     enum ofile_type type;	/* The type of file for this architecture */
 				/*  can be OFILE_ARCHIVE, OFILE_Mach_O, */
     				/*  OFILE_LLVM_BITCODE or OFILE_UNKNOWN. */
-    struct fat_arch *fat_arch;	/* If this came from fat file this is valid */
-			        /*  and not NULL (needed for the align value */
-				/*  and to output a fat file if only one arch)*/
+    struct fat_arch *fat_arch;	/* If this came from fat file one of these */
+    struct fat_arch_64		/* is valid and not NULL (needed for the */
+		    *fat_arch64;/* align value and to output a fat file if */
+				/* only one arch) */
     char *fat_arch_name;	/* If this came from fat file this is valid */
 				/*  and is tthe name of this architecture */
 				/*  (used for error messages). */
@@ -71,13 +72,15 @@ struct arch {
     enum bool      toc_long_name;/* use the long name in the output */
     char	  *toc_name;	 /* name of toc member */
     uint32_t       toc_name_size;/* size of name of toc member */
-    uint32_t       ntocs;	/* number of table of contents entries */
+    uint64_t       ntocs;	/* number of table of contents entries */
+    enum bool	   using_64toc; /* TRUE if we are using a 64-bit toc */
     struct toc_entry
 		  *toc_entries; /* the table of contents entries */
-    struct ranlib *toc_ranlibs;	/* the ranlib structs */
+    struct ranlib *toc_ranlibs;	/* the 32-bit ranlib structs */
+    struct ranlib_64 *toc_ranlibs64; /* the 64-bit ranlib structs */
     char	  *toc_strings;	/* strings of symbol names for toc entries */
-    uint32_t       toc_strsize;	/* number of bytes for the strings above */
-    uint32_t	  library_size;	/* current working size and final output size */
+    uint64_t       toc_strsize;	/* number of bytes for the strings above */
+    uint64_t	  library_size;	/* current working size and final output size */
 				/*  for this arch when it's a library (used */
 				/*  for creating the toc entries). */
 
@@ -148,6 +151,10 @@ struct object {
     struct twolevel_hints_command   /* the two-level namespace hints command */
 	*hints_cmd;
     struct prebind_cksum_command *cs;/* the prebind check sum command */
+    struct segment_command
+	*seg_bitcode;	    	    /* the 32-bit bitcode segment command */
+    struct segment_command_64
+	*seg_bitcode64;    	    /* the 64-bit bitcode segment command */
     struct segment_command
 	*seg_linkedit;	    	    /* the 32-bit link edit segment command */
     struct segment_command_64
@@ -246,13 +253,13 @@ struct object {
     struct ofile *ld_r_ofile;
 };
 
-extern struct ofile * breakout(
+__private_extern__ struct ofile * breakout(
     char *filename,
     struct arch **archs,
     uint32_t *narchs,
     enum bool calculate_input_prebind_cksum);
 
-extern struct ofile * breakout_mem(
+__private_extern__ struct ofile * breakout_mem(
     void *membuf,
     uint32_t length,
     char *filename,
@@ -260,32 +267,34 @@ extern struct ofile * breakout_mem(
     uint32_t *narchs,
     enum bool calculate_input_prebind_cksum);
 
-extern void free_archs(
+__private_extern__ void free_archs(
     struct arch *archs,
     uint32_t narchs);
 
-extern void writeout(
+__private_extern__ void writeout(
     struct arch *archs,
     uint32_t narchs,
     char *output,
     unsigned short mode,
     enum bool sort_toc,
     enum bool commons_in_toc,
+    enum bool force_64bit_toc,
     enum bool library_warnings,
     uint32_t *throttle);
 
-extern void writeout_to_mem(
+__private_extern__ void writeout_to_mem(
     struct arch *archs,
     uint32_t narchs,
     char *filename,
     void **outputbuf,
-    uint32_t *length,
+    uint64_t *length,
     enum bool sort_toc,
     enum bool commons_in_toc,
+    enum bool force_64bit_toc,
     enum bool library_warning,
     enum bool *seen_archive);
 
-extern void checkout(
+__private_extern__ void checkout(
     struct arch *archs,
     uint32_t narchs);
 

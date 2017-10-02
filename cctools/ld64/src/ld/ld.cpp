@@ -23,7 +23,7 @@
  */
  
 // start temp HACK for cross builds
-//extern "C" double log2 ( double );
+//extern "C" double log2 ( double ); // ld64-port: commented
 //#define __MATH__
 // end temp HACK for cross builds
 
@@ -37,10 +37,9 @@
 #include <errno.h>
 #include <limits.h>
 #include <unistd.h>
-#include "helper.h" // ld64-port: for __has_include
-#if __has_include(<execinfo.h>)
+#if HAVE_EXECINFO_H // ld64-port
 #include <execinfo.h>
-#endif
+#endif // HAVE_EXECINFO_H
 #include <mach/mach_time.h>
 #include <mach/vm_statistics.h>
 #include <mach/mach_init.h>
@@ -50,6 +49,7 @@
 #include <dlfcn.h>
 #include <AvailabilityMacros.h>
 
+#include <iostream>
 #include <string>
 #include <map>
 #include <set>
@@ -82,6 +82,8 @@
 #include "passes/branch_shim.h"
 #include "passes/objc.h"
 #include "passes/dylibs.h"
+#include "passes/bitcode_bundle.h"
+#include "passes/code_dedup.h"
 
 #include "parsers/archive_file.h"
 #include "parsers/macho_relocatable_file.h"
@@ -115,8 +117,12 @@ public:
 	void									setSectionSizesAndAlignments();
 	void									sortSections();
 	void									markAtomsOrdered() { _atomsOrderedInSections = true; }
+	bool									hasReferenceToWeakExternal(const ld::Atom& atom);
+
 	virtual									~InternalState() {}
 private:
+	bool									inMoveRWChain(const ld::Atom& atom, const char* filePath, const char*& dstSeg, bool& wildCardMatch);
+	bool									inMoveROChain(const ld::Atom& atom, const char* filePath, const char*& dstSeg, bool& wildCardMatch);
 
 	class FinalSection : public ld::Internal::FinalSection 
 	{
@@ -140,6 +146,8 @@ private:
 		static ld::Section		_s_DATA_nl_symbol_ptr;
 		static ld::Section		_s_DATA_common;
 		static ld::Section		_s_DATA_zerofill;
+		static ld::Section		_s_DATA_DIRTY_data;
+		static ld::Section		_s_DATA_CONST_const;
 	};
 	
 	bool hasZeroForFileOffset(const ld::Section* sect);
@@ -158,6 +166,7 @@ private:
 	SectionInToOut			_sectionInToFinalMap;
 	const Options&			_options;
 	bool					_atomsOrderedInSections;
+	std::unordered_map<const ld::Atom*, const char*> _pendingSegMove;
 };
 
 ld::Section	InternalState::FinalSection::_s_DATA_data( "__DATA", "__data",  ld::Section::typeUnclassified);
@@ -167,6 +176,9 @@ ld::Section	InternalState::FinalSection::_s_TEXT_const("__TEXT", "__const", ld::
 ld::Section	InternalState::FinalSection::_s_DATA_nl_symbol_ptr("__DATA", "__nl_symbol_ptr", ld::Section::typeNonLazyPointer);
 ld::Section	InternalState::FinalSection::_s_DATA_common("__DATA", "__common", ld::Section::typeZeroFill);
 ld::Section	InternalState::FinalSection::_s_DATA_zerofill("__DATA", "__zerofill", ld::Section::typeZeroFill);
+ld::Section	InternalState::FinalSection::_s_DATA_DIRTY_data( "__DATA_DIRTY", "__data",  ld::Section::typeUnclassified);
+ld::Section	InternalState::FinalSection::_s_DATA_CONST_const( "__DATA_CONST", "__const",  ld::Section::typeUnclassified);
+
 std::vector<const char*> InternalState::FinalSection::_s_segmentsSeen;
 
 
@@ -190,7 +202,7 @@ InternalState::FinalSection::FinalSection(const ld::Section& sect, uint32_t sect
 	  _segmentOrder(segmentOrder(sect, opts)),
 	  _sectionOrder(sectionOrder(sect, sectionsSeen, opts))
 {
-	//fprintf(stderr, "FinalSection(%s, %s) _segmentOrder=%d, _sectionOrder=%d\n", 
+	//fprintf(stderr, "FinalSection(%16s, %16s) _segmentOrder=%3d, _sectionOrder=0x%08X\n",
 	//		this->segmentName(), this->sectionName(), _segmentOrder, _sectionOrder);
 }
 
@@ -214,6 +226,14 @@ const ld::Section& InternalState::FinalSection::outputSection(const ld::Section&
 			else if ( strcmp(sect.segmentName(), "__TEXT") == 0 ) {
 				if ( strcmp(sect.sectionName(), "__const_coal") == 0 )
 					return _s_TEXT_const;
+			}
+			else if ( strcmp(sect.segmentName(), "__DATA_DIRTY") == 0 ) {
+				if ( strcmp(sect.sectionName(), "__datacoal_nt") == 0 )
+					return _s_DATA_DIRTY_data;
+			}
+			else if ( strcmp(sect.segmentName(), "__DATA_CONST") == 0 ) {
+				if ( strcmp(sect.sectionName(), "__const_coal") == 0 )
+					return _s_DATA_CONST_const;
 			}
 			break;
 		case ld::Section::typeZeroFill:
@@ -276,18 +296,33 @@ uint32_t InternalState::FinalSection::segmentOrder(const ld::Section& sect, cons
 		if ( strcmp(sect.segmentName(), "__DATA") == 0 ) 
 			return order.size()+2;
 	}
+	else if ( options.outputKind() == Options::kStaticExecutable ) {
+		const std::vector<const char*>& order = options.segmentOrder();
+		for (size_t i=0; i != order.size(); ++i) {
+			if ( strcmp(sect.segmentName(), order[i]) == 0 )
+				return i+1;
+		}
+		if ( strcmp(sect.segmentName(), "__PAGEZERO") == 0 )
+			return 0;
+		if ( strcmp(sect.segmentName(), "__TEXT") == 0 )
+			return order.size()+1;
+		if ( strcmp(sect.segmentName(), "__DATA") == 0 )
+			return order.size()+2;
+	}
 	else {
 		if ( strcmp(sect.segmentName(), "__PAGEZERO") == 0 ) 
 			return 0;
 		if ( strcmp(sect.segmentName(), "__TEXT") == 0 ) 
 			return 1;
+		if ( strcmp(sect.segmentName(), "__TEXT_EXEC") == 0 )
+			return 2;
 		// in -r mode, want __DATA  last so zerofill sections are at end
 		if ( strcmp(sect.segmentName(), "__DATA") == 0 ) 
-			return (options.outputKind() == Options::kObjectFile) ? 5 : 2;
+			return (options.outputKind() == Options::kObjectFile) ? 6 : 3;
 		if ( strcmp(sect.segmentName(), "__OBJC") == 0 ) 
-			return 3;
-		if ( strcmp(sect.segmentName(), "__IMPORT") == 0 ) 
 			return 4;
+		if ( strcmp(sect.segmentName(), "__IMPORT") == 0 )
+			return 5;
 	}
 	// layout non-standard segments in order seen (+100 to shift beyond standard segments)
 	for (uint32_t i=0; i < _s_segmentsSeen.size(); ++i) {
@@ -307,7 +342,7 @@ uint32_t InternalState::FinalSection::sectionOrder(const ld::Section& sect, uint
 	if ( sect.type() == ld::Section::typeLastSection )
 		return INT_MAX;
 	const std::vector<const char*>* sectionList = options.sectionOrder(sect.segmentName());
-	if ( (options.outputKind() == Options::kPreload) && (sectionList != NULL) ) {
+	if ( ((options.outputKind() == Options::kPreload) || (options.outputKind() == Options::kDyld)) && (sectionList != NULL) ) {
 		uint32_t count = 10;
 		for (std::vector<const char*>::const_iterator it=sectionList->begin(); it != sectionList->end(); ++it, ++count) {
 			if ( strcmp(*it, sect.sectionName()) == 0 ) 
@@ -322,23 +357,28 @@ uint32_t InternalState::FinalSection::sectionOrder(const ld::Section& sect, uint
 					return 10;
 				else
 					return 11;
+			case ld::Section::typeNonStdCString:
+				if ( (strcmp(sect.sectionName(), "__oslogstring") == 0) && options.makeEncryptable() )
+					return INT_MAX-1;
+				else
+					return sectionsSeen+20;
 			case ld::Section::typeStub:
 				return 12;
 			case ld::Section::typeStubHelper:
 				return 13;
 			case ld::Section::typeLSDA:
-				return INT_MAX-3;
+				return INT_MAX-4;
 			case ld::Section::typeUnwindInfo:
-				return INT_MAX-2;
+				return INT_MAX-3;
 			case ld::Section::typeCFI:
-				return INT_MAX-1;
+				return INT_MAX-2;
 			case ld::Section::typeStubClose:
 				return INT_MAX;
 			default:
 				return sectionsSeen+20;
 		}
 	}
-	else if ( strcmp(sect.segmentName(), "__DATA") == 0 ) {
+	else if ( strncmp(sect.segmentName(), "__DATA", 6) == 0 ) {
 		switch ( sect.type() ) {
 			case ld::Section::typeLazyPointerClose:
 				return 8;
@@ -353,15 +393,15 @@ uint32_t InternalState::FinalSection::sectionOrder(const ld::Section& sect, uint
 			case ld::Section::typeTerminatorPointers:
 				return 13;
 			case ld::Section::typeTLVInitialValues:
-				return INT_MAX-4; // need TLV zero-fill to follow TLV init values
+				return INT_MAX-259; // need TLV zero-fill to follow TLV init values
 			case ld::Section::typeTLVZeroFill:
-				return INT_MAX-3;
+				return INT_MAX-258;
 			case ld::Section::typeZeroFill:
 				// make sure __huge is always last zerofill section
 				if ( strcmp(sect.sectionName(), "__huge") == 0 )
 					return INT_MAX-1;
 				else
-					return INT_MAX-2;
+					return INT_MAX-256+sectionsSeen; // <rdar://problem/25448494> zero fill need to be last and in "seen" order
 			default:
 				// <rdar://problem/14348664> __DATA,__const section should be near __mod_init_func not __data
 				if ( strcmp(sect.sectionName(), "__const") == 0 )
@@ -404,7 +444,7 @@ uint32_t InternalState::FinalSection::sectionOrder(const ld::Section& sect, uint
 	}
 	// make sure zerofill in any other section is at end of segment
 	if ( sect.type() == ld::Section::typeZeroFill )
-		return INT_MAX-1;
+		return INT_MAX-256+sectionsSeen;
 	return sectionsSeen+20;
 }
 
@@ -495,10 +535,118 @@ static void validateFixups(const ld::Atom& atom)
 }
 #endif
 
+bool InternalState::hasReferenceToWeakExternal(const ld::Atom& atom)
+{
+	// if __DATA,__const atom has pointer to weak external symbol, don't move to __DATA_CONST
+	const ld::Atom* target = NULL;
+	for (ld::Fixup::iterator fit=atom.fixupsBegin(); fit != atom.fixupsEnd(); ++fit) {
+		if ( fit->firstInCluster() ) {
+			target = NULL;
+		}
+		switch ( fit->binding ) {
+			case ld::Fixup::bindingNone:
+			case ld::Fixup::bindingByNameUnbound:
+				break;
+			case ld::Fixup::bindingByContentBound:
+			case ld::Fixup::bindingDirectlyBound:
+				target = fit->u.target;
+				break;
+			case ld::Fixup::bindingsIndirectlyBound:
+				target = indirectBindingTable[fit->u.bindingIndex];
+				break;
+		}
+		if ( (target != NULL) && (target->definition() == ld::Atom::definitionRegular)
+			&& (target->combine() == ld::Atom::combineByName) && (target->scope() == ld::Atom::scopeGlobal) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool InternalState::inMoveRWChain(const ld::Atom& atom, const char* filePath, const char*& dstSeg, bool& wildCardMatch)
+{
+	if ( !_options.hasDataSymbolMoves() )
+		return false;
+
+	auto pos = _pendingSegMove.find(&atom);
+	if ( pos != _pendingSegMove.end() ) {
+		dstSeg = pos->second;
+		return true;
+	}
+
+	bool result = false;
+	if ( _options.moveRwSymbol(atom.name(), filePath, dstSeg, wildCardMatch) )
+		result = true;
+
+	for (ld::Fixup::iterator fit=atom.fixupsBegin(); fit != atom.fixupsEnd(); ++fit) {
+		if ( fit->kind == ld::Fixup::kindNoneFollowOn ) {
+			if ( fit->binding == ld::Fixup::bindingDirectlyBound ) {
+				if ( inMoveRWChain(*(fit->u.target), filePath, dstSeg, wildCardMatch) )
+					result = true;
+			}
+		}
+	}
+
+	if ( result ) {
+		for (ld::Fixup::iterator fit=atom.fixupsBegin(); fit != atom.fixupsEnd(); ++fit) {
+			if ( fit->kind == ld::Fixup::kindNoneFollowOn ) {
+				if ( fit->binding == ld::Fixup::bindingDirectlyBound ) {
+					_pendingSegMove[fit->u.target] = dstSeg;
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
+
+bool InternalState::inMoveROChain(const ld::Atom& atom, const char* filePath, const char*& dstSeg, bool& wildCardMatch)
+{
+	if ( !_options.hasCodeSymbolMoves() )
+		return false;
+
+	auto pos = _pendingSegMove.find(&atom);
+	if ( pos != _pendingSegMove.end() ) {
+		dstSeg = pos->second;
+		return true;
+	}
+
+	bool result = false;
+	if ( _options.moveRoSymbol(atom.name(), filePath, dstSeg, wildCardMatch) )
+		result = true;
+
+	for (ld::Fixup::iterator fit=atom.fixupsBegin(); fit != atom.fixupsEnd(); ++fit) {
+		if ( fit->kind == ld::Fixup::kindNoneFollowOn ) {
+			if ( fit->binding == ld::Fixup::bindingDirectlyBound ) {
+				if ( inMoveROChain(*(fit->u.target), filePath, dstSeg, wildCardMatch) )
+					result = true;
+			}
+		}
+	}
+
+	if ( result ) {
+		for (ld::Fixup::iterator fit=atom.fixupsBegin(); fit != atom.fixupsEnd(); ++fit) {
+			if ( fit->kind == ld::Fixup::kindNoneFollowOn ) {
+				if ( fit->binding == ld::Fixup::bindingDirectlyBound ) {
+					_pendingSegMove[fit->u.target] = dstSeg;
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
+
+
+
 ld::Internal::FinalSection* InternalState::addAtom(const ld::Atom& atom)
 {
+	//fprintf(stderr, "addAtom: %s\n", atom.name());
 	ld::Internal::FinalSection* fs = NULL;
-	const char* sectName = atom.section().sectionName();
+	const char* curSectName = atom.section().sectionName();
+	const char* curSegName = atom.section().segmentName();
 	ld::Section::Type sectType = atom.section().type();
 	const ld::File* f = atom.file();
 	const char* path = (f != NULL) ? f->path() : NULL;
@@ -506,63 +654,77 @@ ld::Internal::FinalSection* InternalState::addAtom(const ld::Atom& atom)
 		// tentative defintions don't have a real section name yet
 		sectType = ld::Section::typeZeroFill;
 		if ( _options.mergeZeroFill() )
-			sectName = FinalSection::_s_DATA_zerofill.sectionName();
+			curSectName = FinalSection::_s_DATA_zerofill.sectionName();
 		else
-			sectName = FinalSection::_s_DATA_common.sectionName();
+			curSectName = FinalSection::_s_DATA_common.sectionName();
 	}
 	// Support for -move_to_r._segment
 	if ( atom.symbolTableInclusion() == ld::Atom::symbolTableIn ) {
 		const char* dstSeg;
-		//fprintf(stderr, "%s\n", atom.name());
 		bool wildCardMatch;
-		if ( _options.moveRwSymbol(atom.name(), path, dstSeg, wildCardMatch) ) {
+		if ( inMoveRWChain(atom, path, dstSeg, wildCardMatch) ) {
 			if ( (sectType != ld::Section::typeZeroFill) 
 			  && (sectType != ld::Section::typeUnclassified) 
-			  && (sectType != ld::Section::typeTentativeDefs) ) {
+			  && (sectType != ld::Section::typeTentativeDefs)
+			  && (sectType != ld::Section::typeDyldInfo) ) {
 				if ( !wildCardMatch )
 					warning("cannot move symbol '%s' from file %s to segment '%s' because symbol is not data (is %d)", atom.name(), path, dstSeg, sectType);
 			}
 			else {
+				curSegName = dstSeg;
 				if ( _options.traceSymbolLayout() )
-					printf("symbol '%s', -move_to_rw_segment mapped it to %s/%s\n", atom.name(), dstSeg, sectName);
-				fs = this->getFinalSection(dstSeg, sectName, sectType);
+					printf("symbol '%s', -move_to_rw_segment mapped it to %s/%s\n", atom.name(), curSegName, curSectName);
+				fs = this->getFinalSection(curSegName, curSectName, sectType);
 			}
 		}
-		if ( (fs == NULL) && _options.moveRoSymbol(atom.name(), path, dstSeg, wildCardMatch) ) {
-			if ( atom.section().type() != ld::Section::typeCode ) {
+		if ( (fs == NULL) && inMoveROChain(atom, path, dstSeg, wildCardMatch) ) {
+			if ( (sectType != ld::Section::typeCode)
+			  && (sectType != ld::Section::typeUnclassified) ) {
 				if ( !wildCardMatch )
 					warning("cannot move symbol '%s' from file %s to segment '%s' because symbol is not code (is %d)", atom.name(), path, dstSeg, sectType);
 			}
 			else {
+				curSegName = dstSeg;
 				if ( _options.traceSymbolLayout() )
-					printf("symbol '%s', -move_to_ro_segment mapped it to %s/%s\n", atom.name(), dstSeg, sectName);
-				fs = this->getFinalSection(dstSeg, sectName, ld::Section::typeCode);
+					printf("symbol '%s', -move_to_ro_segment mapped it to %s/%s\n", atom.name(), curSegName, curSectName);
+				fs = this->getFinalSection(curSegName, curSectName, ld::Section::typeCode);
 			}
 		}
 	}
 	// support for -rename_section and -rename_segment
-	if ( fs == NULL ) {
-		const std::vector<Options::SectionRename>& sectRenames = _options.sectionRenames();
-		const std::vector<Options::SegmentRename>& segRenames = _options.segmentRenames();
-		for ( std::vector<Options::SectionRename>::const_iterator it=sectRenames.begin(); it != sectRenames.end(); ++it) {
-			if ( (strcmp(sectName, it->fromSection) == 0) && (strcmp(atom.section().segmentName(), it->fromSegment) == 0) ) {
+	for (const Options::SectionRename& rename : _options.sectionRenames()) {
+		if ( (strcmp(curSectName, rename.fromSection) == 0) && (strcmp(curSegName, rename.fromSegment) == 0) ) {
+			if ( _options.useDataConstSegment() && (strcmp(curSectName, "__const") == 0) && (strcmp(curSegName, "__DATA") == 0) && hasReferenceToWeakExternal(atom) ) {
+				// if __DATA,__const atom has pointer to weak external symbol, don't move to __DATA_CONST
+				curSectName = "__const_weak";
+				fs = this->getFinalSection(curSegName, curSectName, sectType);
 				if ( _options.traceSymbolLayout() )
-					printf("symbol '%s', -rename_section mapped it to %s/%s\n", atom.name(), it->toSegment, it->toSection);
-				fs = this->getFinalSection(it->toSegment, it->toSection, sectType);
+					printf("symbol '%s', contains pointers to weak symbols, so mapped it to __DATA/__const_weak\n", atom.name());
 			}
-		}
-		if ( fs == NULL ) {
-			for ( std::vector<Options::SegmentRename>::const_iterator it=segRenames.begin(); it != segRenames.end(); ++it) {
-				if ( strcmp(atom.section().segmentName(), it->fromSegment) == 0 ) {
-					if ( _options.traceSymbolLayout() )
-						printf("symbol '%s', -rename_segment mapped it to %s/%s\n", atom.name(), it->toSegment, sectName);
-					fs = this->getFinalSection(it->toSegment, sectName, sectType);
-				}
+			else if ( _options.useDataConstSegment() && (sectType == ld::Section::typeNonLazyPointer) && hasReferenceToWeakExternal(atom) ) {
+				// if __DATA,__nl_symbol_ptr atom has pointer to weak external symbol, don't move to __DATA_CONST
+				curSectName = "__got_weak";
+				fs = this->getFinalSection("__DATA", curSectName, sectType);
+				if ( _options.traceSymbolLayout() )
+					printf("symbol '%s', contains pointers to weak symbols, so mapped it to __DATA/__got_weak\n", atom.name());
+			}
+			else {
+				curSegName = rename.toSegment;
+				curSectName = rename.toSection;
+				fs = this->getFinalSection(rename.toSegment, rename.toSection, sectType);
+				if ( _options.traceSymbolLayout() )
+					printf("symbol '%s', -rename_section mapped it to %s/%s\n", atom.name(), fs->segmentName(), fs->sectionName());
 			}
 		}
 	}
-	
-	
+	for (const Options::SegmentRename& rename : _options.segmentRenames()) {
+		if ( strcmp(curSegName, rename.fromSegment) == 0 ) {
+			if ( _options.traceSymbolLayout() )
+				printf("symbol '%s', -rename_segment mapped it to %s/%s\n", atom.name(), rename.toSegment, curSectName);
+			fs = this->getFinalSection(rename.toSegment, curSectName, sectType);
+		}
+	}
+
 	// if no override, use default location
 	if ( fs == NULL ) {
 		fs = this->getFinalSection(atom.section());
@@ -570,7 +732,7 @@ ld::Internal::FinalSection* InternalState::addAtom(const ld::Atom& atom)
 			printf("symbol '%s', use default mapping to %s/%s\n", atom.name(), fs->segmentName(), fs->sectionName());
 	}
 
-	//fprintf(stderr, "InternalState::doAtom(%p), name=%s, sect=%s, finalsect=%p\n", &atom, atom.name(), atom.section().sectionName(), fs);
+	//fprintf(stderr, "InternalState::doAtom(%p), name=%s, sect=%s, finalseg=%s\n", &atom, atom.name(), atom.section().sectionName(), fs->segmentName());
 #ifndef NDEBUG
 	validateFixups(atom);
 #endif
@@ -592,6 +754,7 @@ ld::Internal::FinalSection* InternalState::addAtom(const ld::Atom& atom)
 		// normal case
 		fs->atoms.push_back(&atom);
 	}
+	this->atomToSection[&atom] = fs;
 	return fs;
 }
 
@@ -734,7 +897,7 @@ void InternalState::setSectionSizesAndAlignments()
 				bool pagePerAtom = false;
 				uint32_t atomAlignmentPowerOf2 = atom->alignment().powerOf2;
 				uint32_t atomModulus = atom->alignment().modulus;
-				if ( _options.pageAlignDataAtoms() && ( strcmp(atom->section().segmentName(), "__DATA") == 0) ) { 
+				if ( _options.pageAlignDataAtoms() && ( strncmp(atom->section().segmentName(), "__DATA", 6) == 0) ) {
 					// most objc sections cannot be padded
 					bool contiguousObjCSection = ( strncmp(atom->section().sectionName(), "__objc_", 7) == 0 );
 					if ( strcmp(atom->section().sectionName(), "__objc_const") == 0 )
@@ -802,6 +965,21 @@ void InternalState::setSectionSizesAndAlignments()
 				this->hasThreadLocalVariableDefinitions = true;
 		}
 	}
+
+	// <rdar://problem/24221680> All __thread_data and __thread_bss sections must have same alignment
+	uint8_t maxThreadAlign = 0;
+	for (ld::Internal::FinalSection* sect : sections) {
+		if ( (sect->type() == ld::Section::typeTLVInitialValues) || (sect->type() == ld::Section::typeTLVZeroFill) ) {
+			if ( sect->alignment > maxThreadAlign )
+				maxThreadAlign = sect->alignment;
+		}
+	}
+	for (ld::Internal::FinalSection* sect : sections) {
+		if ( (sect->type() == ld::Section::typeTLVInitialValues) || (sect->type() == ld::Section::typeTLVZeroFill) ) {
+			sect->alignment = maxThreadAlign;
+		}
+	}
+
 }
 
 uint64_t InternalState::assignFileOffsets() 
@@ -814,13 +992,22 @@ uint64_t InternalState::assignFileOffsets()
 	uint64_t address = 0;
 	const char* lastSegName = "";
 	uint64_t floatingAddressStart = _options.baseAddress();
+	bool haveFixedSegments = false;
 	
+	// mark all sections as not having an address yet
+	for (std::vector<ld::Internal::FinalSection*>::iterator it = sections.begin(); it != sections.end(); ++it) {
+		ld::Internal::FinalSection* sect = *it;
+		sect->alignmentPaddingBytes = 0;
+		sect->address = ULLONG_MAX;
+	}
+
 	// first pass, assign addresses to sections in segments with fixed start addresses
 	if ( log ) fprintf(stderr, "Fixed address segments:\n");
 	for (std::vector<ld::Internal::FinalSection*>::iterator it = sections.begin(); it != sections.end(); ++it) {
 		ld::Internal::FinalSection* sect = *it;
 		if ( ! _options.hasCustomSegmentAddress(sect->segmentName()) ) 
 			continue;
+		haveFixedSegments = true;
 		if ( segmentsArePageAligned ) {
 			if ( strcmp(lastSegName, sect->segmentName()) != 0 ) {
 				address = _options.customSegmentAddress(sect->segmentName());
@@ -853,16 +1040,47 @@ uint64_t InternalState::assignFileOffsets()
 			floatingAddressStart = address;
 		}
 	}
-	
-	// second pass, assign section address to sections in segments that are contiguous with previous segment
+
+	// second pass, assign section addresses to sections in segments that are ordered after a segment with a fixed address
+	if ( haveFixedSegments && !_options.segmentOrder().empty() ) {
+		if ( log ) fprintf(stderr, "After Fixed address segments:\n");
+		lastSegName = "";
+		ld::Internal::FinalSection* lastSect = NULL; 
+		for (std::vector<ld::Internal::FinalSection*>::iterator it = sections.begin(); it != sections.end(); ++it) {
+			ld::Internal::FinalSection* sect = *it;
+			if ( (sect->address == ULLONG_MAX) && _options.segmentOrderAfterFixedAddressSegment(sect->segmentName()) ) {
+				address = lastSect->address + lastSect->size;
+				if ( (strcmp(lastSegName, sect->segmentName()) != 0) && segmentsArePageAligned ) {
+					// round up size of last segment
+					address = pageAlign(address, _options.segPageSize(lastSegName));
+				}
+				// adjust section address based on alignment
+				uint64_t unalignedAddress = address;
+				uint64_t alignment = (1 << sect->alignment);
+				address = ( (unalignedAddress+alignment-1) & (-alignment) );
+				sect->alignmentPaddingBytes = (address - unalignedAddress);
+				sect->address = address;
+				if ( log ) fprintf(stderr, "  address=0x%08llX, hidden=%d, alignment=%02d, section=%s,%s\n",
+									sect->address, sect->isSectionHidden(), sect->alignment, sect->segmentName(), sect->sectionName());
+				// update running totals
+				if ( !sect->isSectionHidden() || hiddenSectionsOccupyAddressSpace )
+					address += sect->size;
+			}
+			lastSegName = sect->segmentName();
+			lastSect = sect;
+		}
+	}
+
+	// last pass, assign addresses to remaining sections
 	address = floatingAddressStart;
 	lastSegName = "";
 	ld::Internal::FinalSection* overlappingFixedSection = NULL;
 	ld::Internal::FinalSection* overlappingFlowSection = NULL;
+	ld::Internal::FinalSection* prevSect = NULL;
 	if ( log ) fprintf(stderr, "Regular layout segments:\n");
 	for (std::vector<ld::Internal::FinalSection*>::iterator it = sections.begin(); it != sections.end(); ++it) {
 		ld::Internal::FinalSection* sect = *it;
-		if ( _options.hasCustomSegmentAddress(sect->segmentName()) ) 
+		if ( sect->address != ULLONG_MAX )
 			continue;
 		if ( (_options.outputKind() == Options::kPreload) && (sect->type() == ld::Section::typeMachHeader) ) {
 			sect->alignmentPaddingBytes = 0;
@@ -879,6 +1097,7 @@ uint64_t InternalState::assignFileOffsets()
 				lastSegName = sect->segmentName();
 			}
 		}
+		
 		// adjust section address based on alignment
 		uint64_t unalignedAddress = address;
 		uint64_t alignment = (1 << sect->alignment);
@@ -887,7 +1106,16 @@ uint64_t InternalState::assignFileOffsets()
 		// update section info
 		sect->address = address;
 		sect->alignmentPaddingBytes = (address - unalignedAddress);
-		
+
+		// <rdar://problem/21994854> if first section is more aligned than segment, move segment start up to match
+		if ( (prevSect != NULL) && (prevSect->type() == ld::Section::typeFirstSection) && (strcmp(prevSect->segmentName(), sect->segmentName()) == 0) ) {
+			assert(prevSect->size == 0);
+			if ( prevSect->address != sect->address ) {
+				prevSect->alignmentPaddingBytes += (sect->address - prevSect->address);
+				prevSect->address = sect->address;
+			}
+		}
+
 		// sanity check size
 		if ( ((address + sect->size) > _options.maxAddress()) && (_options.outputKind() != Options::kObjectFile) 
 															  && (_options.outputKind() != Options::kStaticExecutable) )
@@ -923,6 +1151,7 @@ uint64_t InternalState::assignFileOffsets()
 		// update running totals
 		if ( !sect->isSectionHidden() || hiddenSectionsOccupyAddressSpace )
 			address += sect->size;
+		prevSect = sect;
 	}
 	if ( overlappingFixedSection != NULL ) {
 		fprintf(stderr, "Section layout:\n");
@@ -1075,6 +1304,14 @@ int main(int argc, const char* argv[])
 		
 		// create object to track command line arguments
 		Options options(argc, argv);
+		if (options.dumpNormalizedLibArgs()) {
+			for (auto info : options.getInputFiles()) {
+				for (auto arg : info.lib_cli_argument()) {
+					std::cout << arg << '\0';
+				}
+			}
+			exit(0);
+		}
 		InternalState state(options);
 		
 		// allow libLTO to be overridden by command line -lto_library
@@ -1115,11 +1352,15 @@ int main(int argc, const char* argv[])
 		ld::passes::dylibs::doPass(options, state);	// must be after stubs and GOT passes
 		ld::passes::order::doPass(options, state);
 		state.markAtomsOrdered();
-		ld::passes::branch_shim::doPass(options, state);	// must be after stubs 
+		ld::passes::dedup::doPass(options, state);
+		ld::passes::branch_shim::doPass(options, state);	// must be after stubs
 		ld::passes::branch_island::doPass(options, state);	// must be after stubs and order pass
 		ld::passes::dtrace::doPass(options, state);
 		ld::passes::compact_unwind::doPass(options, state);  // must be after order pass
- 		
+#if defined(HAVE_XAR_XAR_H) && defined(LTO_SUPPORT) // ld64-port
+		ld::passes::bitcode_bundle::doPass(options, state);  // must be after dylib
+#endif // HAVE_XAR_XAR_H && LTO_SUPPORT
+
 		// sort final sections
 		state.sortSections();
 
@@ -1151,7 +1392,7 @@ int main(int argc, const char* argv[])
 			fprintf(stderr, "processed %3u dylib files\n", inputFiles._totalDylibsLoaded);
 			fprintf(stderr, "wrote output file            totaling %15s bytes\n", commatize(out.fileSize(), temp));
 		}
-		if ( getenv("IOS_SIGN_CODE_WHEN_BUILD") || getenv("IOS_FAKE_CODE_SIGN") ) {
+		if ( getenv("IOS_SIGN_CODE_WHEN_BUILD") || getenv("IOS_FAKE_CODE_SIGN") ) { // ld64-port   (keep IOS_SIGN_CODE_WHEN_BUILD for compatibility with the 'iOS toolchain based on clang for linux' project)
 			std::string ldid = std::string("ldid -S ") + std::string(options.outputFilePath());
 			system(ldid.c_str());
 		}
@@ -1162,7 +1403,9 @@ int main(int argc, const char* argv[])
 		}
 	}
 	catch (const char* msg) {
-		if ( archInferred )
+		if ( strstr(msg, "malformed") != NULL )
+			fprintf(stderr, "ld: %s\n", msg);
+		else if ( archInferred )
 			fprintf(stderr, "ld: %s for inferred architecture %s\n", msg, archName);
 		else if ( showArch )
 			fprintf(stderr, "ld: %s for architecture %s\n", msg, archName);
@@ -1179,7 +1422,7 @@ int main(int argc, const char* argv[])
 // implement assert() function to print out a backtrace before aborting
 void __assert_rtn(const char* func, const char* file, int line, const char* failedexpr)
 {
-#if __has_include(<execinfo.h>)
+#ifdef HAVE_EXECINFO_H // ld64-port
     Snapshot *snapshot = Snapshot::globalSnapshot;
     
     snapshot->setSnapshotMode(Snapshot::SNAPSHOT_DEBUG);
@@ -1205,7 +1448,7 @@ void __assert_rtn(const char* func, const char* file, int line, const char* fail
 		snapshot->recordAssertionMessage("%d  %p  %s + %ld\n", i, callStack[i], symboName, offset);
 	}
     fprintf(stderr, "A linker snapshot was created at:\n\t%s\n", snapshot->rootDir());
-#endif
+#endif // HAVE_EXECINFO_H
 	fprintf(stderr, "ld: Assertion failed: (%s), function %s, file %s, line %d.\n", failedexpr, func, file, line);
 	exit(1);
 }

@@ -15,10 +15,15 @@ bin_PROGRAMS =  \
 	segedit \
 	pagestuff \
 	ranlib \
-	codesign_allocate
+	codesign_allocate \
+	bitcode_strip \
+	ctf_insert \
+	check_dylib \
+	cmpdylib \
+	inout
 
 LDADD =  \
-	$(top_srcdir)/libstuff/libstuff.la \
+	$(top_builddir)/libstuff/libstuff.la \
 	$(DL_LIB) \
 	$(LTO_RPATH)
 
@@ -38,11 +43,14 @@ indr_SOURCES = indr.c
 strip_SOURCES = strip.c
 nmedit_SOURCES = strip.c
 nmedit_CFLAGS = -DNMEDIT $(AM_CFLAGS)
-
 segedit_SOURCES = segedit.c
-pagestuff_SOURCES=pagestuff.c
-
+pagestuff_SOURCES = pagestuff.c
 ranlib_SOURCES = libtool.c
 ranlib_CFLAGS = -DRANLIB $(AM_CFLAGS)
 codesign_allocate_SOURCES = codesign_allocate.c
-
+bitcode_strip_SOURCES= bitcode_strip.c
+bitcode_strip_CFLAGS = -DALLOW_ARCHIVES $(AM_CFLAGS)
+ctf_insert_SOURCES= ctf_insert.c
+check_dylib_SOURCES= check_dylib.c
+cmpdylib_SOURCES= cmpdylib.c
+inout_SOURCES= inout.c

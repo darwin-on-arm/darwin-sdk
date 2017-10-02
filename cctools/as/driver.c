@@ -21,14 +21,16 @@
 /* used by error calls (exported) */
 char *progname = NULL;
 
+char *find_clang(); /* cctools-port */
+
 int
 main(
 int argc,
 char **argv,
 char **envp)
 {
-    const char *LIB = "../libexec/as/";
-    const char *LOCALLIB = "../local/libexec/as/";
+    const char *LIB = ASLIBEXECDIR;
+    const char *LOCALLIB = ASLIBEXECDIR;
     const char *AS = "/as";
 
     int i, j;
@@ -270,10 +272,6 @@ char **envp)
 	    run_clang = 1;
 	}
 
-#if 0
-/*
- * See rdar://9801003 where this will be changed before before NMOs and NMiOS.
- */
 	/*
 	 * Use the LLVM integrated assembler as the default with the as(1)
 	 * driver for Intel (64-bit & 32-bit) as well as ARM for 32-bit too
@@ -283,7 +281,10 @@ char **envp)
 	   arch_flag.cputype == CPU_TYPE_I386 ||
 	   arch_flag.cputype == CPU_TYPE_ARM)
 	    run_clang = 1;
-#endif
+
+#ifndef DISABLE_CLANG_AS /* cctools-port */
+	if(getenv("CCTOOLS_NO_CLANG_AS") != NULL) /* cctools-port */
+	    run_clang = 0;
 
 	/*
 	 * Use the clang as the assembler if is the default or asked to with
@@ -295,12 +296,23 @@ char **envp)
 	    arch_flag.cputype == CPU_TYPE_I386 ||
 	    arch_flag.cputype == CPU_TYPE_ARM64 ||
 	    arch_flag.cputype == CPU_TYPE_ARM)){
+#if 0 /* cctools port */
 	    as = makestr(prefix, CLANG, NULL);
-	    if(access(as, F_OK) != 0){
-		printf("%s: assembler (%s) not installed\n", progname, as);
+#endif
+	    /* cctools-port start */
+#ifndef __APPLE__
+	    char *target_triple = getenv("CCTOOLS_CLANG_AS_TARGET_TRIPLE");
+#endif /* ! __APPLE__ */
+	    as = find_clang();
+	    /* cctools-port end */
+	    if(!as || access(as, F_OK) != 0){ /* cctools-port: added  !as || */
+		printf("%s: assembler (%s) not installed\n", progname,
+		       as ? as : "clang"); /* cctools-port:
+					      added  ? as : "clang" */
 		exit(1);
 	    }
-	    new_argv = allocate((argc + 8) * sizeof(char *));
+	    new_argv = allocate((argc + 10) * sizeof(char *)); /* cctools-port:
+								  + 8 -> + 10 */
 	    new_argv[0] = as;
 	    j = 1;
 	    /*
@@ -355,17 +367,26 @@ char **envp)
 	    /* Add -c or clang will run ld(1). */
 	    new_argv[j] = "-c";
 	    j++;
+	    /* cctools-port start */
+#ifndef __APPLE__
+	    new_argv[j] = "-target";
+	    j++;
+	    new_argv[j] = target_triple ? target_triple : "unknown-apple-darwin";
+	    j++;
+#endif /* ! __APPLE__ */
+	    /* cctools-port end */
 	    new_argv[j] = NULL;
 	    if(execute(new_argv, verbose))
 		exit(0);
 	    else
 		exit(1);
 	}
+#endif /* ! DISABLE_CLANG_AS */
 
 	/*
 	 * If this assembler exist try to run it else print an error message.
 	 */
-	as = makestr(prefix, LIB, arch_name, AS, NULL);
+	as = makestr(LIB, arch_name, AS, NULL);
 	new_argv = allocate((argc + 1) * sizeof(char *));
 	new_argv[0] = as;
 	j = 1;
@@ -387,7 +408,7 @@ char **envp)
 	    else
 		exit(1);
 	}
-	as_local = makestr(prefix, LOCALLIB, arch_name, AS, NULL);
+	as_local = makestr(LOCALLIB, arch_name, AS, NULL);
 	new_argv[0] = as_local;
 	if(access(as_local, F_OK) == 0){
 	    argv[0] = as_local;
@@ -401,7 +422,7 @@ char **envp)
 	arch_flags = get_arch_flags();
 	count = 0;
 	for(i = 0; arch_flags[i].name != NULL; i++){
-	    as = makestr(prefix, LIB, arch_flags[i].name, AS, NULL);
+	    as = makestr(LIB, arch_flags[i].name, AS, NULL);
 	    if(access(as, F_OK) == 0){
 		if(count == 0)
 		    printf("Installed assemblers are:\n");
@@ -409,7 +430,7 @@ char **envp)
 		count++;
 	    }
 	    else{
-		as_local = makestr(prefix, LOCALLIB, arch_flags[i].name, AS,
+		as_local = makestr(LOCALLIB, arch_flags[i].name, AS,
 				   NULL);
 		if(access(as_local, F_OK) == 0){
 		    if(count == 0)
