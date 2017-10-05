@@ -1,6 +1,6 @@
 /* xcode-select - clone of apple's xcode-select utility
  *
- * Copyright (c) 2013, Brian McKenzie <mckenzba@gmail.com>
+ * Copyright (c) 2013-2017, Brian McKenzie <mckenzba@gmail.com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -38,7 +38,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#define TOOL_VERSION "1.0.0"
+#define TOOL_VERSION "1.0.1"
 #define SDK_CFG ".xcdev.dat"
 
 /**
@@ -73,65 +73,64 @@ static void version(void)
 /**
  * @func validate_directory_path -- validate if requested directory path exists
  * @arg dir - directory to validate
- * @return: 0 on success, 1 on failure
+ * @return: 0 on success, -1 on failure
  */
 static int validate_directory_path(const char *dir)
 {
+	int status = -1;
 	struct stat fstat;
-	int retval = 1;
 
 	if (stat(dir, &fstat) != 0)
-		fprintf(stderr, "xcode-select: error: unable to validate directory \'%s\' (errno=%s)\n", dir, strerror(errno));
+		fprintf(stderr, "xcode-select: error: unable to validate directory \'%s\' (%s)\n", dir, strerror(errno));
 	else {
 		if (S_ISDIR(fstat.st_mode) == 0)
 			fprintf(stderr, "xcode-select: error: \'%s\' is not a directory, please try a different path\n", dir);
 		else
-			retval = 0;
+			status = 0;
 	}
 
-	return retval;
+	return status;
 }
 
 /**
  * @func get_developer_path -- retrieve current developer path
- * @return: string of current path on success, NULL string on failure
+ * @return: number of bytes read
  */
-static char *get_developer_path(void)
+static int get_developer_path(char *path)
 {
-	FILE *fp = NULL;
-	char devpath[PATH_MAX - 1];
-	char *pathtocfg = NULL;
-	char *cfg_path = NULL;
-	char *value = NULL;
+	FILE *fp;
+	int len = 0;
+	char *home_path, *cfg_path, *dev_path;
 
-	if ((value = getenv("DEVELOPER_DIR")) != NULL)
-		return value;
-
-	memset(devpath, 0, sizeof(devpath));
-
-	if ((pathtocfg = getenv("HOME")) == NULL) {
-		fprintf(stderr, "xcode-select: error: failed to read HOME environment variable.\n");
-		return NULL;
+	if ((dev_path = getenv("DEVELOPER_DIR")) != NULL) {
+		len = strlen(dev_path);
+		strncpy(path, dev_path, len);
+		return len;
 	}
 
-	cfg_path = (char *)malloc((strlen(pathtocfg) + sizeof(SDK_CFG)));
+	if ((home_path = getenv("HOME")) == NULL) {
+		fprintf(stderr, "xcode-select: error: failed to read HOME environment variable.\n");
+		return len;
+	}
 
-	strcat(pathtocfg, "/");
-	strcat(cfg_path, strcat(pathtocfg, SDK_CFG));
+	cfg_path = (char *)calloc((strlen(home_path) + strlen(SDK_CFG) + 2), sizeof(char));
+
+	strcat(home_path, "/");
+	strcat(cfg_path, strcat(home_path, SDK_CFG));
 
 	if ((fp = fopen(cfg_path, "r")) != NULL) {
+		fseek(fp, 0, SEEK_END);
+		int fsize = ftell(fp);
 		fseek(fp, SEEK_SET, 0);
-		(void)fread(devpath, (PATH_MAX - 1), 1, fp);
-		value = devpath;
+		len = fread(path, fsize, 1, fp);
 		fclose(fp);
 	} else {
-		fprintf(stderr, "xcode-select: error: unable to read configuration file. (errno=%s)\n", strerror(errno));
-		return NULL;
+		fprintf(stderr, "xcode-select: error: unable to read configuration file. (%s)\n", strerror(errno));
 	}
 
 	free(cfg_path);
 
-	return value;
+	return len;
 }
 
 /**
@@ -141,45 +140,46 @@ static char *get_developer_path(void)
  */
 static int set_developer_path(const char *path)
 {
-	FILE *fp = NULL;
-	char *pathtocfg = NULL;
-	char *cfg_path = NULL;
+	FILE *fp;
+	int status = -1;
+	char *cfg_path, *home_path;
 
-	if ((pathtocfg = getenv("HOME")) == NULL) {
+	if (validate_directory_path(path) < 0)
+		return status;
+
+	if ((home_path = getenv("HOME")) == NULL) {
 		fprintf(stderr, "xcode-select: error: failed to read HOME variable.\n");
-		return -1;
+		return status;
 	}
 
-        cfg_path = (char *)malloc((strlen(pathtocfg) + sizeof(SDK_CFG)));
+        cfg_path = (char *)calloc((strlen(home_path) + strlen(SDK_CFG) + 2), sizeof(char));
 
-        strcat(pathtocfg, "/");
-	strcat(cfg_path, strcat(pathtocfg, SDK_CFG));
+        strcat(home_path, "/");
+	strcat(cfg_path, strcat(home_path, SDK_CFG));
 
 	if ((fp = fopen(cfg_path, "w+")) != NULL) {
 		fwrite(path, 1, strlen(path), fp);
 		fclose(fp);
+		status = 0;
 	} else {
-		fprintf(stderr, "xcode-select: error: unable to open configuration file. (errno=%s)\n", strerror(errno));
-		return -1;
+		fprintf(stderr, "xcode-select: error: unable to open configuration file. (%s)\n", strerror(errno));
 	}
 
 	free(cfg_path);
 
-	return 0;
+	return status;
 }
 
 int main(int argc, char *argv[])
 {
 	int ch;
-	char *path = NULL;
+	int status = -1;
+	char path[PATH_MAX] = { 0 };
 
 	if (argc < 2)
 		usage();
 
-	static int help_f, version_f, switch_f, printpath_f;
-	help_f = version_f = switch_f = printpath_f = 0;
-
-	static struct option options[] = {
+	struct option options[] = {
 		{ "help", no_argument, 0, 'h' },
 		{ "version", no_argument, 0, 'v' },
 		{ "switch", required_argument, 0, 's' },
@@ -190,41 +190,26 @@ int main(int argc, char *argv[])
 	while ((ch = getopt_long_only(argc, argv, "hvs:p", options, NULL)) != (-1)) {
 		switch (ch) {
 			case 'h':
-				help_f = 1;
+				usage();
 				break;
 			case 'v':
-				version_f = 1;
+				version();
 				break;
 			case 's':
-				switch_f = 1;
-				path = optarg;
+				strncpy(path, optarg, strlen(optarg));
+				status = set_developer_path(path);
 				break;
 			case 'p':
-				printpath_f = 1;
+				if (get_developer_path(path) > 0) {
+					fprintf(stdout, "%s\n", path);
+					status = 0;
+				}
 				break;
 			case '?':
 			default:
-				help_f = 1;
+				usage();
 		}
 	}
 
-	if (help_f == 1)
-		usage();
-
-	if (version_f == 1)
-		version();
-
-	if (switch_f == 1) {
-		if (validate_directory_path(path) == 0)
-			return set_developer_path(path);
-		else
-			return -1;
-	}
-
-	if (printpath_f == 1) {
-		path = get_developer_path();
-		fprintf(stdout, "%s\n", path);
-	}
-
-	return 0;
+	return status;
 }
