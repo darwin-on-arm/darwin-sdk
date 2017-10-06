@@ -38,6 +38,7 @@
 #include <libgen.h>
 #include <limits.h>
 #include <errno.h>
+#include <stdbool.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -118,15 +119,11 @@ static void stripext(char *dst, const char *src)
 static int test_sdk_authenticity(const char *path)
 {
 	int retval = 0;
-	char *fname = NULL;
-
-	fname = (char *)malloc(PATH_MAX - 1);
+	char fname[PATH_MAX] = { 0 };
 
 	sprintf(fname, "%s/info.ini", path);
 	if (access(fname, F_OK) != (-1))
 		retval = 1;
-
-	free(fname);
 
 	return retval;
 }
@@ -141,7 +138,7 @@ static void verbose_printf(FILE *fp, const char *str, ...)
 {
 	va_list args;
 
-	if (verbose_mode == 1) {
+	if (verbose_mode) {
 		va_start(args, str);
 		vfprintf(fp, str, args);
 		va_end(args);
@@ -158,7 +155,7 @@ static void logging_printf(FILE *fp, const char *str, ...)
 {
 	va_list args;
 
-	if (logging_mode == 1) {
+	if (logging_mode) {
 		va_start(args, str);
 		vfprintf(fp, str, args);
 		va_end(args);
@@ -218,18 +215,18 @@ static void version(void)
 static int validate_directory_path(const char *dir)
 {
 	struct stat fstat;
-	int retval = -1;
 
-	if (stat(dir, &fstat) != 0)
-		fprintf(stderr, "xcrun: error: unable to validate path \'%s\' (errno=%s)\n", dir, strerror(errno));
-	else {
-		if (S_ISDIR(fstat.st_mode) == 0)
-			fprintf(stderr, "xcrun: error: \'%s\' is not a valid path\n", dir);
-		else
-			retval = 0;
+	if (stat(dir, &fstat) != 0) {
+		fprintf(stderr, "xcrun: error: unable to validate path \'%s\' (%s)\n", dir, strerror(errno));
+		return -1;
 	}
 
-	return retval;
+	if (S_ISDIR(fstat.st_mode) == 0) {
+		fprintf(stderr, "xcrun: error: \'%s\' is not a valid path\n", dir);
+		return -1;
+	}
+
+	return 0;
 }
 
 /**
@@ -318,19 +315,16 @@ static int default_cfg_handler(void *user, const char *section, const char *name
 static toolchain_config get_toolchain_info(const char *path)
 {
 	toolchain_config config;
-	char *info_path = NULL;
+	char info_path[PATH_MAX] = { 0 };
 
-	info_path = (char *)malloc(PATH_MAX - 1);
 	sprintf(info_path, "%s/info.ini", path);
 
-	if (ini_parse(info_path, toolchain_cfg_handler, &config) != (-1)) {
-		free(info_path);
+	if (ini_parse(info_path, toolchain_cfg_handler, &config) != (-1))
 		return config;
-	} else {
-		fprintf(stderr, "xcrun: error: failed to retrieve toolchain info from '\%s\'. (errno=%s)\n", info_path, strerror(errno));
-		free(info_path);
-		exit(1);
-	}
+
+	fprintf(stderr, "xcrun: error: failed to retrieve toolchain info from '\%s\'. (%s)\n", info_path, strerror(errno));
+
+	exit(1);
 }
 
 /**
@@ -341,19 +335,16 @@ static toolchain_config get_toolchain_info(const char *path)
 static sdk_config get_sdk_info(const char *path)
 {
 	sdk_config config;
-	char *info_path = NULL;
+	char info_path[PATH_MAX] = { 0 };
 
-	info_path = (char *)malloc(PATH_MAX - 1);
 	sprintf(info_path, "%s/info.ini", path);
 
-	if (ini_parse(info_path, sdk_cfg_handler, &config) != (-1)) {
-		free(info_path);
+	if (ini_parse(info_path, sdk_cfg_handler, &config) != (-1))
 		return config;
-	} else {
-		fprintf(stderr, "xcrun: error: failed to retrieve sdk info from '\%s\'. (errno=%s)\n", info_path, strerror(errno));
-		free(info_path);
-		exit(1);
-	}
+
+	fprintf(stderr, "xcrun: error: failed to retrieve sdk info from '\%s\'. (%s)\n", info_path, strerror(errno));
+
+	exit(1);
 }
 
 /**
@@ -367,10 +358,10 @@ static default_config get_default_info(const char *path)
 
 	if (ini_parse(path, default_cfg_handler, &config) != (-1))
 		return config;
-	else {
-		fprintf(stderr, "xcrun: error: failed to retrieve default info from '\%s\'. (errno=%s)\n", path, strerror(errno));
-		exit(1);
-	}
+
+	fprintf(stderr, "xcrun: error: failed to retrieve default info from '\%s\'. (%s)\n", path, strerror(errno));
+
+	exit(1);
 }
 
 /**
@@ -380,9 +371,9 @@ static default_config get_default_info(const char *path)
 static char *get_developer_path(void)
 {
 	FILE *fp = NULL;
-	char devpath[PATH_MAX - 1];
+	char devpath[PATH_MAX] = { 0 };
 	char *pathtocfg = NULL;
-	char *cfg_path = NULL;
+	char cfg_path[PATH_MAX] = { 0 };
 	char *value = NULL;
 
 	verbose_printf(stdout, "xcrun: info: attempting to retrieve developer path from DEVELOPER_DIR...\n");
@@ -392,31 +383,25 @@ static char *get_developer_path(void)
 		return value;
 	}
 
-	bzero(devpath, (PATH_MAX - 1));
-
 	verbose_printf(stdout, "xcrun: info: attempting to retrieve developer path from configuration cache...\n");
 	if ((pathtocfg = getenv("HOME")) == NULL) {
 		fprintf(stderr, "xcrun: error: failed to read HOME variable.\n");
 		return NULL;
 	}
 
-	cfg_path = (char *)malloc((strlen(pathtocfg) + sizeof(SDK_CFG)));
-
 	sprintf(cfg_path, "%s/%s", pathtocfg, SDK_CFG);
 
 	if ((fp = fopen(cfg_path, "r")) != NULL) {
 		fseek(fp, 0, SEEK_SET);
-		(void)fread(devpath, (PATH_MAX - 1), 1, fp);
+		(void)fread(devpath, PATH_MAX, 1, fp);
 		value = devpath;
 		fclose(fp);
 	} else {
-		fprintf(stderr, "xcrun: error: unable to read configuration cache. (errno=%s)\n", strerror(errno));
+		fprintf(stderr, "xcrun: error: unable to read configuration cache. (%s)\n", strerror(errno));
 		return NULL;
 	}
 
 	verbose_printf(stdout, "xcrun: info: using developer path \'%s\' from configuration cache.\n", value);
-
-	free(cfg_path);
 
 	return value;
 }
@@ -428,26 +413,25 @@ static char *get_developer_path(void)
  */
 static char *get_toolchain_path(const char *name)
 {
-	char *path = NULL;
-	char *devpath = NULL;
+	char *devpath, *path;
 
 	devpath = developer_dir;
-	path = (char *)malloc(PATH_MAX - 1);
+	path = (char *)calloc(PATH_MAX, sizeof(char));
 
-	if (devpath != NULL) {
-		sprintf(path, "%s/Toolchains/%s.toolchain", devpath, name);
-		if (validate_directory_path(path) != (-1))
-			return path;
-		else {
-			fprintf(stderr, "xcrun: error: \'%s\' is not a valid toolchain path.\n", path);
-			free(path);
-			exit(1);
-		}
-	} else {
+	if (devpath == NULL) {
 		fprintf(stderr, "xcrun: error: failed to retrieve developer path, do you have it set?\n");
-		free(path);
-		exit(1);
+		goto failure;
 	}
+
+	sprintf(path, "%s/Toolchains/%s.toolchain", devpath, name);
+	if (validate_directory_path(path) != (-1))
+		return path;
+
+	fprintf(stderr, "xcrun: error: \'%s\' is not a valid toolchain path.\n", path);
+
+failure:
+	free(path);
+	exit(1);
 }
 
 /**
@@ -457,26 +441,25 @@ static char *get_toolchain_path(const char *name)
  */
 static char *get_sdk_path(const char *name)
 {
-	char *path = NULL;
-	char *devpath = NULL;
+	char *devpath, *path;
 
 	devpath = developer_dir;
-	path = (char *)malloc(PATH_MAX - 1);
+	path = (char *)calloc(PATH_MAX, sizeof(char));
 
-	if (devpath != NULL) {
-		sprintf(path, "%s/SDKs/%s.sdk", devpath, name);
-		if (validate_directory_path(path) != (-1))
-			return path;
-		else {
-			fprintf(stderr, "xcrun: error: \'%s\' is not a valid sdk path.\n", path);
-			free(path);
-			exit(1);
-		}
-	} else {
+	if (devpath == NULL) {
 		fprintf(stderr, "xcrun: error: failed to retrieve developer path, do you have it set?\n");
-		free(path);
-		exit(1);
+		goto failure;
 	}
+
+	sprintf(path, "%s/SDKs/%s.sdk", devpath, name);
+	if (validate_directory_path(path) != (-1))
+		return path;
+
+	fprintf(stderr, "xcrun: error: \'%s\' is not a valid sdk path.\n", path);
+
+failure:
+	free(path);
+	exit(1);
 }
 
 /**
@@ -488,10 +471,15 @@ static char *get_sdk_path(const char *name)
 static void parse_target_triple(char *triple, const char *ver, const char *arch)
 {
 	int where = 1;
+	bool is_macosx = false;
 	int xx, yy, zz, ch, kern_ver;
 
 	if (ver == NULL)
 		return;
+
+	/* For now, assume that any x86 target is macOS. */
+	if ((strcmp(arch, "x86_64") == 0) || (strcmp(arch, "i386") == 0))
+		is_macosx = true;
 
 	xx = yy = zz = 0;
 
@@ -535,13 +523,21 @@ static void parse_target_triple(char *triple, const char *ver, const char *arch)
 	} while (*ver++ != '\0');
 
 	switch (xx) {
+		case 11:
+			kern_ver = 17;
+			break;
 		case 10:
-			kern_ver = (yy + 4);
-			break;
+			{
+				if (is_macosx)
+					kern_ver = (yy + 4);
+				else
+					kern_ver = 16;
+				break;
+			}
 		case 9:
-		case 8:
-			kern_ver = 14;
+			kern_ver = 15;
 			break;
+		case 8:
 		case 7:
 			kern_ver = 14;
 			break;
@@ -583,25 +579,22 @@ static void parse_target_triple(char *triple, const char *ver, const char *arch)
  */
 static char *get_target_triple(const char *current_sdk)
 {
-	char *triple = NULL;
-	char *default_arch = NULL;
-	char *deployment_target = NULL;
+	char *triple, *default_arch, *deployment_target;
 
 	if ((triple = getenv("TARGET_TRIPLE")) != NULL)
 		return triple;
-	else {
-		triple = (char *)malloc(64);
 
-		if ((default_arch = strdup(get_sdk_info(get_sdk_path(current_sdk)).default_arch)) == NULL)
-			return NULL;
+	triple = (char *)calloc(NAME_MAX, sizeof(char));
 
-		if ((deployment_target = strdup(get_sdk_info(get_sdk_path(current_sdk)).deployment_target)) == NULL)
-			return NULL;
+	if ((default_arch = strdup(get_sdk_info(get_sdk_path(current_sdk)).default_arch)) == NULL)
+		return NULL;
 
-		parse_target_triple(triple, deployment_target, default_arch);
+	if ((deployment_target = strdup(get_sdk_info(get_sdk_path(current_sdk)).deployment_target)) == NULL)
+		return NULL;
 
-		return triple;
-	}
+	parse_target_triple(triple, deployment_target, default_arch);
+
+	return triple;
 }
 
 /**
@@ -615,26 +608,31 @@ static int call_command(const char *cmd, int argc, char *argv[])
 {
 	int i;
 	char *envp[7] = { NULL };
-	char *target_triple = NULL;
-	char *deployment_target = NULL;
+	char *target_triple, *deployment_target;
 
 	/*
-	 * Pass SDKROOT, PATH, HOME, LD_LIBRARY_PATH, TARGET_TRIPLE, and MACOSX_DEPLOYMENT_TARGET to the called program's environment.
+	 * Pass settings to the called program's environment.
 	 *
-	 * > SDKROOT is used for when programs such as clang need to know the location of the sdk.
-	 * > PATH is used for when programs such as clang need to call on another program (such as the linker).
-	 * > HOME is used for recursive calls to xcrun (such as when xcrun calls a script calling xcrun ect).
-	 * > LD_LIBRARY_PATH is used for when tools needs to access libraries that are specific to the toolchain.
-	 * > TARGET_TRIPLE is used for clang/clang++ cross compilation when building on a foreign host.
-	 * > {MACOSX|IPHONEOS}_DEPLOYMENT_TARGET is used for tools like ld that need to set the minimum compatibility
-	 *   version number for a linked binary.
+	 *  * SDKROOT is used for when programs such as clang need to know the location of the sdk.
+	 *
+	 *  * PATH is used for when programs such as clang need to call on another program (such as the linker).
+	 *
+	 *  * HOME is used for recursive calls to xcrun (such as when xcrun calls a script calling xcrun ect).
+	 *
+	 *  * LD_LIBRARY_PATH is used for when tools needs to access libraries that are specific to the toolchain.
+	 *
+	 *  * TARGET_TRIPLE is used for clang/clang++ cross compilation when building on a foreign host.
+	 *
+	 *  * {MACOSX|IPHONEOS}_DEPLOYMENT_TARGET is used for tools like ld that need to set the minimum compatibility
+	 *    version number for a linked binary.
 	 */
-	envp[0] = (char *)malloc(PATH_MAX - 1);
-	envp[1] = (char *)malloc(PATH_MAX - 1);
-	envp[2] = (char *)malloc(PATH_MAX - 1);
-	envp[3] = (char *)malloc(PATH_MAX - 1);
-	envp[4] = (char *)malloc(64);
-	envp[5] = (char *)malloc(255);
+
+	envp[0] = (char *)calloc(PATH_MAX, sizeof(char));
+	envp[1] = (char *)calloc(PATH_MAX, sizeof(char));
+	envp[2] = (char *)calloc(PATH_MAX, sizeof(char));
+	envp[3] = (char *)calloc(PATH_MAX, sizeof(char));
+	envp[4] = (char *)calloc(NAME_MAX, sizeof(char));
+	envp[5] = (char *)calloc(NAME_MAX, sizeof(char));
 
 	sprintf(envp[0], "SDKROOT=%s", get_sdk_path(current_sdk));
 	sprintf(envp[1], "PATH=%s/usr/bin:%s/usr/bin:%s", developer_dir, get_toolchain_path(current_toolchain), getenv("PATH"));
@@ -683,13 +681,12 @@ static char *search_command(const char *name, char *dirs)
 {
 	char *cmd = NULL;	/* command's absolute path */
 	char *absl_path = NULL;		/* path entry to search */
-	char delimiter[2] = ":";	/* delimiter for directories in dirs argument */
 
 	/* Allocate space for the program's absolute path */
-	cmd = (char *)malloc(PATH_MAX - 1);
+	cmd = (char *)calloc(PATH_MAX, sizeof(char));
 
 	/* Search each path entry in dirs until we find our program. */
-	absl_path = strtok(dirs, delimiter);
+	absl_path = strtok(dirs, ":");
 	while (absl_path != NULL) {
 		verbose_printf(stdout, "xcrun: info: checking directory \'%s\' for command \'%s\'...\n", absl_path, name);
 
@@ -703,7 +700,7 @@ static char *search_command(const char *name, char *dirs)
 		}
 
 		/* If not, move onto the next entry.. */
-		absl_path = strtok(NULL, delimiter);
+		absl_path = strtok(NULL, ":");
 	}
 
 	return cmd;
@@ -728,7 +725,7 @@ static int request_command(const char *name, int argc, char *argv[])
 	 * current_toolchain for PATH.
 	 */
 	if (current_sdk == NULL) {
-		current_sdk = (char *)malloc(255);
+		current_sdk = (char *)calloc(NAME_MAX, sizeof(char));
 		if ((sdk_env = getenv("SDKROOT")) != NULL)
 			stripext(current_sdk, basename(sdk_env));
 		else
@@ -736,7 +733,7 @@ static int request_command(const char *name, int argc, char *argv[])
 	}
 
 	if (current_toolchain == NULL) {
-		current_toolchain = (char *)malloc(255);
+		current_toolchain = (char *)calloc(NAME_MAX, sizeof(char));
 		if ((toolchain_env = getenv("TOOLCHAINS")) != NULL)
 			stripext(current_toolchain, basename(toolchain_env));
 		else
@@ -792,13 +789,13 @@ do_search:
 		} else {
 			call_command(cmd, argc, argv);
 			/* NOREACH */
-			fprintf(stderr, "xcrun: error: can't exec \'%s\' (errno=%s)\n", cmd, strerror(errno));
+			fprintf(stderr, "xcrun: error: can't exec \'%s\' (%s)\n", cmd, strerror(errno));
 			return -1;
 		}
 	}
 
 	/* We have searched everywhere, but we haven't found our program. State why. */
-	fprintf(stderr, "xcrun: error: can't stat \'%s\' (errno=%s)\n", name, strerror(errno));
+	fprintf(stderr, "xcrun: error: can't stat \'%s\' (%s)\n", name, strerror(errno));
 
 	return -1;
 }
@@ -895,7 +892,7 @@ static int xcrun_main(int argc, char *argv[])
 									else
 										exit(1);
 								} else {
-									current_sdk = (char *)malloc(255);
+									current_sdk = (char *)calloc(NAME_MAX, sizeof(char));
 									explicit_sdk_mode = 1;
 									stripext(current_sdk, sdk);
 								}
@@ -915,7 +912,7 @@ static int xcrun_main(int argc, char *argv[])
 									else
 										exit(1);
 								} else {
-									current_toolchain = (char *)malloc(255);
+									current_toolchain = (char *)calloc(NAME_MAX, sizeof(char));
 									explicit_toolchain_mode = 1;
 									stripext(current_toolchain, toolchain);
 								}
@@ -975,7 +972,7 @@ static int xcrun_main(int argc, char *argv[])
 
 	/* If our SDK and/or Toolchain hasn't been specified, fall back to environment or defaults. */
 	if (current_sdk == NULL) {
-		current_sdk = (char *)malloc(255);
+		current_sdk = (char *)calloc(NAME_MAX, sizeof(char));
 		if ((sdk_env = getenv("SDKROOT")) != NULL)
 			stripext(current_sdk, basename(sdk_env));
 		else
@@ -983,7 +980,7 @@ static int xcrun_main(int argc, char *argv[])
 	}
 
 	if (current_toolchain == NULL) {
-		current_toolchain = (char *)malloc(255);
+		current_toolchain = (char *)calloc(NAME_MAX, sizeof(char));
 		if ((toolchain_env = getenv("TOOLCHAINS")) != NULL)
 			stripext(current_toolchain, basename(toolchain_env));
 		else
@@ -1048,7 +1045,7 @@ static int xcrun_main(int argc, char *argv[])
 		if (request_command(tool_called, 0, NULL) != -1)
 			retval = 0;
 		else {
-			fprintf(stderr, "xcrun: error: unable to locate command \'%s\' (errno=%s)\n", tool_called, strerror(errno));
+			fprintf(stderr, "xcrun: error: unable to locate command \'%s\' (%s)\n", tool_called, strerror(errno));
 			exit(1);
 		}
 	}

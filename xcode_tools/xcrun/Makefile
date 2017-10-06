@@ -5,10 +5,9 @@ LFLAGS :=
 
 CC := $(shell which clang)
 
-CFLAGS += \
+#CFLAGS += \
 	-Wall \
-	-Werror \
-	-O2
+	-Werror
 
 C_SRCS := \
 	ini.c \
