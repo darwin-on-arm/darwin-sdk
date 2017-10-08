@@ -1,6 +1,6 @@
-/* xcrun - clone of apple's xcode xcrun utility
+/* xcrun - clone of Apple's xcode xcrun utility
  *
- * Copyright (c) 2013-2014, Brian McKenzie <mckenzba@gmail.com>
+ * Copyright (c) 2013-2017, Brian McKenzie <mckenzba@gmail.com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without modification,
@@ -82,13 +82,13 @@ static int ios_deployment_target_set = 0;
 static int macosx_deployment_target_set = 0;
 
 /* Runtime info */
-static char *developer_dir = NULL;
-static char *current_sdk = NULL;
-static char *current_toolchain = NULL;
+static char developer_dir[PATH_MAX];
+static char current_sdk[PATH_MAX];
+static char current_toolchain[PATH_MAX];
 
 /* Alternate behavior flags */
-static char *alternate_sdk_path = NULL;
-static char *alternate_toolchain_path = NULL;
+static char *alternate_sdk_path;
+static char *alternate_toolchain_path;
 
 /* Ways that this tool may be called */
 static const char *multicall_tool_names[4] = {
@@ -119,7 +119,7 @@ static void stripext(char *dst, const char *src)
 static int test_sdk_authenticity(const char *path)
 {
 	int retval = 0;
-	char fname[PATH_MAX] = { 0 };
+	char fname[PATH_MAX];
 
 	sprintf(fname, "%s/info.ini", path);
 	if (access(fname, F_OK) != (-1))
@@ -130,7 +130,7 @@ static int test_sdk_authenticity(const char *path)
 
 /**
  * @func verbose_printf -- Print output to fp in verbose mode.
- * @arg fp - pointer to file (file, stderr, or stdio)
+ * @arg fp  - pointer to file (file, stderr, or stdio)
  * @arg str - string to print
  * @arg ... - additional arguments used
  */
@@ -147,7 +147,7 @@ static void verbose_printf(FILE *fp, const char *str, ...)
 
 /**
  * @func logging_printf -- Print output to fp in logging mode.
- * @arg fp - pointer to file (file, stderr, or stdio)
+ * @arg fp  - pointer to file (file, stderr, or stdio)
  * @arg str - string to print
  * @arg ... - additional arguments used
  */
@@ -165,7 +165,7 @@ static void logging_printf(FILE *fp, const char *str, ...)
 /**
  * @func usage -- Print helpful information about this program.
  */
-static void usage(void)
+static int usage(void)
 {
 	fprintf(stderr,
 		"Usage: %s [options] <tool name> ... arguments ...\n"
@@ -195,16 +195,17 @@ static void usage(void)
 		"  --show-sdk-toolchain-version show selected SDK toolchain version\n\n"
 		, progname);
 
-	exit(0);
+	return 0;
 }
 
 /**
  * @func version -- print out version info for this tool
  */
-static void version(void)
+static int version(void)
 {
 	fprintf(stdout, "xcrun version %s\n", TOOL_VERSION);
-	exit(0);
+
+	return 0;
 }
 
 /**
@@ -231,10 +232,10 @@ static int validate_directory_path(const char *dir)
 
 /**
  * @func toolchain_cfg_handler -- handler used to process toolchain info.ini contents
- * @arg user - ini user pointer (see ini.h)
+ * @arg user    - ini user pointer (see ini.h)
  * @arg section - ini section name (see ini.h)
- * @arg name - ini variable name (see ini.h)
- * @arg value - ini variable value (see ini.h)
+ * @arg name    - ini variable name (see ini.h)
+ * @arg value   - ini variable value (see ini.h)
  * @return: 1 on success, 0 on failure
  */
 static int toolchain_cfg_handler(void *user, const char *section, const char *name, const char *value)
@@ -253,10 +254,10 @@ static int toolchain_cfg_handler(void *user, const char *section, const char *na
 
 /**
  * @func sdk_cfg_handler -- handler used to process sdk info.ini contents
- * @arg user - ini user pointer (see ini.h)
+ * @arg user    - ini user pointer (see ini.h)
  * @arg section - ini section name (see ini.h)
- * @arg name - ini variable name (see ini.h)
- * @arg value - ini variable value (see ini.h)
+ * @arg name    - ini variable name (see ini.h)
+ * @arg value   - ini variable value (see ini.h)
  * @return: 1 on success, 0 on failure
  */
 static int sdk_cfg_handler(void *user, const char *section, const char *name, const char *value)
@@ -287,10 +288,10 @@ static int sdk_cfg_handler(void *user, const char *section, const char *name, co
 
 /**
  * @func default_cfg_handler -- handler used to process xcrun's xcrun.ini contents
- * @arg user - ini user pointer (see ini.h)
+ * @arg user    - ini user pointer (see ini.h)
  * @arg section - ini section name (see ini.h)
- * @arg name - ini variable name (see ini.h)
- * @arg value - ini variable value (see ini.h)
+ * @arg name    - ini variable name (see ini.h)
+ * @arg value   - ini variable value (see ini.h)
  * @return: 1 on success, 0 on failure
  */
 static int default_cfg_handler(void *user, const char *section, const char *name, const char *value)
@@ -366,44 +367,49 @@ static default_config get_default_info(const char *path)
 
 /**
  * @func get_developer_path -- retrieve current developer path
- * @return: string of current path on success, NULL string on failure
+ * @arg path - buffer to hold the developer dir absolute path
+ * @return: number of bytes read.
  */
-static char *get_developer_path(void)
+static int get_developer_path(char *path)
 {
-	FILE *fp = NULL;
-	char devpath[PATH_MAX] = { 0 };
-	char *pathtocfg = NULL;
+	FILE *fp;
+	int len = 0;
+	char *home_path, *dev_path;
 	char cfg_path[PATH_MAX] = { 0 };
-	char *value = NULL;
 
 	verbose_printf(stdout, "xcrun: info: attempting to retrieve developer path from DEVELOPER_DIR...\n");
 
-	if ((value = getenv("DEVELOPER_DIR")) != NULL) {
-		verbose_printf(stdout, "xcrun: info: using developer path \'%s\' from DEVELOPER_DIR.\n", value);
-		return value;
+	if ((dev_path = getenv("DEVELOPER_DIR")) != NULL) {
+		verbose_printf(stdout, "xcrun: info: using developer path \'%s\' from DEVELOPER_DIR.\n", dev_path);
+		len = strlen(dev_path);
+		strncpy(path, dev_path, len);
+		return len;
 	}
 
 	verbose_printf(stdout, "xcrun: info: attempting to retrieve developer path from configuration cache...\n");
-	if ((pathtocfg = getenv("HOME")) == NULL) {
+	if ((home_path = getenv("HOME")) == NULL) {
 		fprintf(stderr, "xcrun: error: failed to read HOME variable.\n");
-		return NULL;
+		return len;
 	}
 
-	sprintf(cfg_path, "%s/%s", pathtocfg, SDK_CFG);
+	strcat(cfg_path, home_path);
+	strcat(cfg_path, "/");
+	strcat(cfg_path, SDK_CFG);
 
 	if ((fp = fopen(cfg_path, "r")) != NULL) {
-		fseek(fp, 0, SEEK_SET);
-		(void)fread(devpath, PATH_MAX, 1, fp);
-		value = devpath;
+		fseek(fp, 0, SEEK_END);
+		int fsize = ftell(fp);
+		fseek(fp, SEEK_SET, 0);
+		len = fread(path, fsize, 1, fp);
 		fclose(fp);
 	} else {
 		fprintf(stderr, "xcrun: error: unable to read configuration cache. (%s)\n", strerror(errno));
-		return NULL;
+		return len;
 	}
 
-	verbose_printf(stdout, "xcrun: info: using developer path \'%s\' from configuration cache.\n", value);
+	verbose_printf(stdout, "xcrun: info: using developer path \'%s\' from configuration cache.\n", path);
 
-	return value;
+	return len;
 }
 
 /**
@@ -465,8 +471,8 @@ failure:
 /**
  * @func parse_target_triple -- Generate target triple by parsing iOS/MacOSX version and cpu architecture
  * @arg triple - buffer to place the target triple
- * @arg ver - Mac OSX or iOS version
- * @arg arch - Mac OSX or iOS cpu architecture
+ * @arg ver    - macOS or iOS version
+ * @arg arch   - macOS or iOS cpu architecture
  */
 static void parse_target_triple(char *triple, const char *ver, const char *arch)
 {
@@ -599,7 +605,7 @@ static char *get_target_triple(const char *current_sdk)
 
 /**
  * @func call_command -- Execute new process to replace this one.
- * @arg cmd - program's absolute path
+ * @arg cmd  - absolute path to the program
  * @arg argc - number of arguments to be passed to new process
  * @arg argv - arguments to be passed to new process
  * @return: -1 on error, otherwise no return
@@ -607,11 +613,11 @@ static char *get_target_triple(const char *current_sdk)
 static int call_command(const char *cmd, int argc, char *argv[])
 {
 	int i;
-	char *envp[7] = { NULL };
+	char *envp[8] = { NULL };
 	char *target_triple, *deployment_target;
 
 	/*
-	 * Pass settings to the called program's environment.
+	 * Pass useful variables to the enviroment of the program to be executed.
 	 *
 	 *  * SDKROOT is used for when programs such as clang need to know the location of the sdk.
 	 *
@@ -625,6 +631,8 @@ static int call_command(const char *cmd, int argc, char *argv[])
 	 *
 	 *  * {MACOSX|IPHONEOS}_DEPLOYMENT_TARGET is used for tools like ld that need to set the minimum compatibility
 	 *    version number for a linked binary.
+	 *
+	 *  * DEVELOPER_DIR is used as a performance optimization when making recursive calls to xcrun.
 	 */
 
 	envp[0] = (char *)calloc(PATH_MAX, sizeof(char));
@@ -633,11 +641,13 @@ static int call_command(const char *cmd, int argc, char *argv[])
 	envp[3] = (char *)calloc(PATH_MAX, sizeof(char));
 	envp[4] = (char *)calloc(NAME_MAX, sizeof(char));
 	envp[5] = (char *)calloc(NAME_MAX, sizeof(char));
+	envp[6] = (char *)calloc(PATH_MAX, sizeof(char));
 
 	sprintf(envp[0], "SDKROOT=%s", get_sdk_path(current_sdk));
 	sprintf(envp[1], "PATH=%s/usr/bin:%s/usr/bin:%s", developer_dir, get_toolchain_path(current_toolchain), getenv("PATH"));
 	sprintf(envp[2], "LD_LIBRARY_PATH=%s/usr/lib", get_toolchain_path(current_toolchain));
 	sprintf(envp[3], "HOME=%s", getenv("HOME"));
+	sprintf(envp[6], "DEVELOPER_DIR=%s", developer_dir);
 
 	if ((target_triple = get_target_triple(current_sdk)) != NULL)
 		sprintf(envp[4], "TARGET_TRIPLE=%s", target_triple);
@@ -657,7 +667,7 @@ static int call_command(const char *cmd, int argc, char *argv[])
 				sprintf(envp[5], "IPHONEOS_DEPLOYMENT_TARGET=%s", deployment_target);
 		} else {
 			fprintf(stderr, "xcrun: error: failed to retrieve deployment target information for %s.sdk.\n", current_sdk);
-			exit(1);
+			return -1;
 		}
 	}
 
@@ -673,84 +683,83 @@ static int call_command(const char *cmd, int argc, char *argv[])
 
 /**
  * @func search_command -- Search a set of directories for a given command
- * @arg name - program's name
+ * @arg buf  - buffer to hold the absolute path to the command
+ * @arg name - command name
  * @arg dirs - set of directories to search, seperated by colons
- * @return: the program's absolute path on success, NULL on failure
+ * @return: 0 on a successful search, -1 on failure
  */
-static char *search_command(const char *name, char *dirs)
+static int search_command(char *buf, const char *name, char *dirs)
 {
-	char *cmd = NULL;	/* command's absolute path */
-	char *absl_path = NULL;		/* path entry to search */
-
-	/* Allocate space for the program's absolute path */
-	cmd = (char *)calloc(PATH_MAX, sizeof(char));
+	char *cmd_search_path;
+	char cmd_absl_path[PATH_MAX] = { 0 };
 
 	/* Search each path entry in dirs until we find our program. */
-	absl_path = strtok(dirs, ":");
-	while (absl_path != NULL) {
-		verbose_printf(stdout, "xcrun: info: checking directory \'%s\' for command \'%s\'...\n", absl_path, name);
+	cmd_search_path = strtok(dirs, ":");
+	while (cmd_search_path != NULL) {
+		verbose_printf(stdout, "xcrun: info: checking directory \'%s\' for command \'%s\'...\n", cmd_search_path, name);
 
 		/* Construct our program's absolute path. */
-		sprintf(cmd, "%s/%s", absl_path, name);
+		sprintf(cmd_absl_path, "%s/%s", cmd_search_path, name);
 
 		/* Does it exist? Is it an executable? */
-		if (access(cmd, (F_OK | X_OK)) != (-1)) {
-			verbose_printf(stdout, "xcrun: info: found command's absolute path: \'%s\'\n", cmd);
-			break;
+		if (access(cmd_absl_path, (F_OK | X_OK)) == 0) {
+			verbose_printf(stdout, "xcrun: info: found command's absolute path: \'%s\'\n", cmd_absl_path);
+			strncpy(buf, cmd_absl_path, strlen(cmd_absl_path));
+			return 0;
 		}
 
 		/* If not, move onto the next entry.. */
-		absl_path = strtok(NULL, ":");
+		cmd_search_path = strtok(NULL, ":");
 	}
 
-	return cmd;
+	return -1;
 }
 
 /**
- * @func request_command - Request a program.
- * @arg name -- name of program
- * @arg argv -- arguments to be passed if program found
+ * @func request_command -- Request a program.
+ * @arg name - name of program
+ * @arg argv - arguments to be passed if program found
  * @return: -1 on failed search, 0 on successful search, no return on execute
  */
 static int request_command(const char *name, int argc, char *argv[])
 {
-	char *cmd = NULL;	/* used to hold our command's absolute path */
-	char *sdk_env = NULL;	/* used for passing SDKROOT in call_command */
-	char *toolch_name = NULL;	/* toolchain name to be used with sdk */
-	char *toolchain_env = NULL;	/* used for passing PATH in call_command */
-	char search_string[PATH_MAX * 1024];	/* our search string */
+	char cmd[PATH_MAX] = { 0 };
+	char search_string[PATH_MAX * 256] = { 0 };
+	char *sdk_env, *toolch_name, *toolchain_env;
 
 	/*
 	 * If xcrun was called in a multicall state, we still want to specify current_sdk for SDKROOT and
 	 * current_toolchain for PATH.
 	 */
-	if (current_sdk == NULL) {
-		current_sdk = (char *)calloc(NAME_MAX, sizeof(char));
-		if ((sdk_env = getenv("SDKROOT")) != NULL)
+	if (strlen(current_sdk) == 0) {
+		if ((sdk_env = getenv("SDKROOT")) != NULL) {
 			stripext(current_sdk, basename(sdk_env));
-		else
-			current_sdk = strdup(get_default_info(XCRUN_DEFAULT_CFG).sdk);
+		} else {
+			const char *sdk_info = get_default_info(XCRUN_DEFAULT_CFG).sdk;
+			strncpy(current_sdk, sdk_info, strlen(sdk_info));
+		}
 	}
 
-	if (current_toolchain == NULL) {
-		current_toolchain = (char *)calloc(NAME_MAX, sizeof(char));
-		if ((toolchain_env = getenv("TOOLCHAINS")) != NULL)
+	if (strlen(current_toolchain) == 0) {
+		if ((toolchain_env = getenv("TOOLCHAINS")) != NULL) {
 			stripext(current_toolchain, basename(toolchain_env));
-		else
-			current_toolchain = strdup(get_default_info(XCRUN_DEFAULT_CFG).toolchain);
+		} else {
+			const char *toolch_info = get_default_info(XCRUN_DEFAULT_CFG).toolchain;
+			strncpy(current_toolchain, toolch_info, strlen(toolch_info));
+		}
 	}
 
 	/* No matter the circumstance, search the developer dir. */
 	sprintf(search_string, "%s/usr/bin:", developer_dir);
 
-	/* If we implicitly specified an sdk, search the sdk and it's associated toolchain. */
+	/* If we explicitly specified an sdk, search the sdk and it's associated toolchain. */
 	if (explicit_sdk_mode == 1) {
 		toolch_name = strdup(get_sdk_info(get_sdk_path(current_sdk)).toolchain);
 		sprintf((search_string + strlen(search_string)), "%s/usr/bin:%s/usr/bin", get_sdk_path(current_sdk), get_toolchain_path(toolch_name));
 		goto do_search;
 	}
 
-	/* If we implicitly specified a toolchain, only search the toolchain. */
+	/* If we explicitly specified a toolchain, only search the toolchain. */
 	if (explicit_toolchain_mode == 1) {
 		sprintf((search_string + strlen(search_string)), "%s/usr/bin", get_toolchain_path(current_toolchain));
 		goto do_search;
@@ -778,19 +787,19 @@ static int request_command(const char *name, int argc, char *argv[])
 
 	/* Search each path entry in search_string until we find our program. */
 do_search:
-	if ((cmd = search_command(name, search_string)) != NULL) {
+	if (search_command(cmd, name, search_string) == 0) {
 		if (finding_mode == 1) {
-			if (access(cmd, (F_OK | X_OK)) != (-1)) {
+			if (access(cmd, (F_OK | X_OK)) == 0) {
 				fprintf(stdout, "%s\n", cmd);
-				free(cmd);
 				return 0;
-			} else
+			} else {
 				return -1;
+			}
 		} else {
-			call_command(cmd, argc, argv);
-			/* NOREACH */
-			fprintf(stderr, "xcrun: error: can't exec \'%s\' (%s)\n", cmd, strerror(errno));
-			return -1;
+			if (call_command(cmd, argc, argv) != 0) {
+				fprintf(stderr, "xcrun: error: can't exec \'%s\' (%s)\n", cmd, strerror(errno));
+				return -1;
+			}
 		}
 	}
 
@@ -809,15 +818,10 @@ do_search:
 static int xcrun_main(int argc, char *argv[])
 {
 	int ch;
-	int retval = 1;
 	int optindex = 0;
 	int argc_offset = 0;
-	char *sdk = NULL;
-	char *toolchain = NULL;
-	char *tool_called = NULL;
-
-	char *sdk_env = NULL;
-	char *toolchain_env = NULL;
+	char *sdk_env, *toolchain_env;
+	char *sdk, *toolchain, *tool_called;
 
 	static int help_f, verbose_f, log_f, find_f, run_f, nocache_f, killcache_f, version_f, sdk_f, toolchain_f, ssdkp_f, ssdkv_f, ssdkpp_f, ssdktt_f, ssdkpv_f;
 	help_f = verbose_f = log_f = find_f = run_f = nocache_f = killcache_f = version_f = sdk_f = toolchain_f = ssdkp_f = ssdkv_f = ssdkpp_f = ssdktt_f = ssdkpv_f = 0;
@@ -844,12 +848,12 @@ static int xcrun_main(int argc, char *argv[])
 
 	/* Print help if nothing is specified */
 	if (argc < 2)
-		usage();
+		return usage();
 
 	/* Only parse arguments if they are given */
 	if (*(*(argv + 1)) == '-') {
 		if (strcmp(argv[1], "-") == 0 || strcmp(argv[1], "--") == 0)
-			usage();
+			return usage();
 		while ((ch = getopt_long_only(argc, argv, "+hvlr:f:nk", options, &optindex)) != (-1)) {
 			switch (ch) {
 				case 'h':
@@ -890,15 +894,14 @@ static int xcrun_main(int argc, char *argv[])
 									if (validate_directory_path(sdk) != (-1))
 										alternate_sdk_path = sdk;
 									else
-										exit(1);
+										return 1;
 								} else {
-									current_sdk = (char *)calloc(NAME_MAX, sizeof(char));
 									explicit_sdk_mode = 1;
 									stripext(current_sdk, sdk);
 								}
 							} else {
 								fprintf(stderr, "xcrun: error: sdk flag requires an argument.\n");
-								exit(1);
+								return 1;
 							}
 							break;
 						case 4: /* --toolchain */
@@ -910,15 +913,14 @@ static int xcrun_main(int argc, char *argv[])
 									if (validate_directory_path(toolchain) != (-1))
 										alternate_toolchain_path = toolchain;
 									else
-										exit(1);
+										return 1;
 								} else {
-									current_toolchain = (char *)calloc(NAME_MAX, sizeof(char));
 									explicit_toolchain_mode = 1;
 									stripext(current_toolchain, toolchain);
 								}
 							} else {
 								fprintf(stderr, "xcrun: error: toolchain flag requires an argument.\n");
-								exit(1);
+								return 1;
 							}
 							break;
 						case 10: /* --show-sdk-path */
@@ -951,122 +953,120 @@ static int xcrun_main(int argc, char *argv[])
 	}
 
 	/* The last non-option argument may be the command called. */
-	if (optind < argc && ((run_f == 0 || find_f == 0) && tool_called == NULL)) {
+	if (optind < argc && ((!run_f || !find_f) && tool_called == NULL)) {
 		tool_called = basename(argv[optind++]);
 		++argc_offset;
 	}
 
 	/* Don't continue if we are missing arguments. */
-	if ((verbose_f == 1 || log_f == 1) && tool_called == NULL) {
+	if ((verbose_f || log_f) && tool_called == NULL) {
 		fprintf(stderr, "xcrun: error: specified arguments require -r or -f arguments.\n");
-		exit(1);
+		return 1;
 	}
 
 	/* Print help? */
-	if (help_f == 1 || argc < 2)
-		usage();
+	if (help_f || argc < 2)
+		return usage();
 
 	/* Print version? */
-	if (version_f == 1)
-		version();
+	if (version_f)
+		return version();
 
 	/* If our SDK and/or Toolchain hasn't been specified, fall back to environment or defaults. */
-	if (current_sdk == NULL) {
-		current_sdk = (char *)calloc(NAME_MAX, sizeof(char));
-		if ((sdk_env = getenv("SDKROOT")) != NULL)
+	if (strlen(current_sdk) == 0) {
+		if ((sdk_env = getenv("SDKROOT")) != NULL) {
 			stripext(current_sdk, basename(sdk_env));
-		else
-			current_sdk = strdup(get_default_info(XCRUN_DEFAULT_CFG).sdk);
+		} else {
+			const char *sdk_info = get_default_info(XCRUN_DEFAULT_CFG).sdk;
+			strncpy(current_sdk, sdk_info, strlen(sdk_info));
+		}
 	}
 
-	if (current_toolchain == NULL) {
-		current_toolchain = (char *)calloc(NAME_MAX, sizeof(char));
-		if ((toolchain_env = getenv("TOOLCHAINS")) != NULL)
+	if (strlen(current_toolchain) == 0) {
+		if ((toolchain_env = getenv("TOOLCHAINS")) != NULL) {
 			stripext(current_toolchain, basename(toolchain_env));
-		else
-			current_toolchain = strdup(get_default_info(XCRUN_DEFAULT_CFG).toolchain);
+		} else {
+			const char *toolch_info = get_default_info(XCRUN_DEFAULT_CFG).toolchain;
+			strncpy(current_toolchain, toolch_info, strlen(toolch_info));
+		}
 	}
 
 	/* Show SDK path? */
-	if (ssdkp_f == 1) {
+	if (ssdkp_f) {
 		printf("%s\n", get_sdk_path(current_sdk));
-		exit(0);
+		return 0;
 	}
 
 	/* Show SDK version? */
-	if (ssdkv_f == 1) {
+	if (ssdkv_f) {
 		printf("%s SDK version %s\n", get_sdk_info(get_sdk_path(current_sdk)).name, get_sdk_info(get_sdk_path(current_sdk)).version);
-		exit(0);
+		return 0;
 	}
 
 	/* Show SDK toolchain path? */
-	if (ssdkpp_f == 1) {
+	if (ssdkpp_f) {
 		printf("%s\n", get_toolchain_path(current_toolchain));
-		exit(0);
+		return 0;
 	}
 
 	/* Show SDK toolchain version? */
-	if (ssdkpv_f == 1) {
+	if (ssdkpv_f) {
 		printf("%s SDK Toolchain version %s (%s)\n", get_sdk_info(get_sdk_path(current_sdk)).name, get_toolchain_info(get_toolchain_path(current_toolchain)).version, get_toolchain_info(get_toolchain_path(current_toolchain)).name);
-		exit(0);
+		return 0;
 	}
 
 	/* Show SDK target triple ? */
-	if (ssdktt_f == 1) {
+	if (ssdktt_f) {
 		printf("%s\n", get_target_triple(current_sdk));
-		exit(0);
+		return 0;
 	}
 
 	/* Clear the lookup cache? */
-	if (killcache_f == 1)
+	if (killcache_f)
 		fprintf(stderr, "xcrun: warning: --kill-cache not supported.\n");
 
 	/* Don't use the lookup cache? */
-	if (nocache_f == 1)
+	if (nocache_f)
 		fprintf(stderr, "xcrun: warning: --no-cache not supported.\n");
 
 	/* Turn on verbose mode? */
-	if (verbose_f == 1)
+	if (verbose_f)
 		verbose_mode = 1;
 
 	/* Turn on logging mode? */
-	if (log_f == 1)
+	if (log_f)
 		logging_mode = 1;
 
 	/* Before we continue, double check if we have a tool to call. */
 	if (tool_called == NULL) {
 		fprintf(stderr, "xcrun: error: no tool specified.\n");
-		exit(1);
+		return 1;
 	}
 
 	/* Search for program? */
-	if (find_f == 1) {
+	if (find_f) {
 		finding_mode = 1;
-		if (request_command(tool_called, 0, NULL) != -1)
-			retval = 0;
-		else {
+		if (request_command(tool_called, 0, NULL) == 0) {
+			return 0;
+		} else {
 			fprintf(stderr, "xcrun: error: unable to locate command \'%s\' (%s)\n", tool_called, strerror(errno));
-			exit(1);
+			return 0;
 		}
 	}
 
 	/* Search and execute program. (default behavior) */
-	if (find_f != 1) {
-		if (request_command(tool_called, (argc - argc_offset),  (argv += ((argc - argc_offset) - (argc - argc_offset) + (argc_offset)))) != -1)
-			retval = -1; /* NOREACH */
-		else {
-			fprintf(stderr, "xcrun: error: failed to execute command \'%s\'. aborting.\n", tool_called);
-			exit(1);
-		}
+	if (request_command(tool_called, (argc - argc_offset),  (argv += ((argc - argc_offset) - (argc - argc_offset) + (argc_offset)))) != 0) {
+		fprintf(stderr, "xcrun: error: failed to execute command \'%s\'. aborting.\n", tool_called);
+		return 1;
 	}
 
-	return retval;
+	return 1;
 }
 
 /**
  * @func get_multicall_state -- Return a number that is associated to a given multicall state.
- * @arg cmd - command that binary is being called
- * @arg state - char array containing a set of possible "multicall states"
+ * @arg cmd        - command that binary is being called
+ * @arg state      - char array containing a set of possible "multicall states"
  * @arg state_size - number of elements in state array
  * @return: a number from 1 to state_size (first enrty to last entry found in state array), or -1 if one isn't found
  */
@@ -1084,47 +1084,44 @@ static int get_multicall_state(const char *cmd, const char *state[], int state_s
 
 int main(int argc, char *argv[])
 {
-	int retval = 1;
 	int call_state;
-	char *this_tool = NULL;
 
 	/* Strip out any path name that may have been passed into argv[0] */
-	this_tool = basename(argv[0]);
-	progname = this_tool;
+	progname = basename(argv[0]);
 
 	/* Get our developer dir */
-	developer_dir = get_developer_path();
+	if (!get_developer_path(developer_dir))
+		return 1;
 
 	/* Check if we are being treated as a multi-call binary. */
-	call_state = get_multicall_state(this_tool, multicall_tool_names, 4);
+	call_state = get_multicall_state(progname, multicall_tool_names, 4);
 
 	/* Execute based on the state that we were called in. */
 	switch (call_state) {
 		case 1: /* xcrun */
-			retval = xcrun_main(argc, argv);
+			return xcrun_main(argc, argv);
 			break;
 		case 2: /* xcrun_log */
 			logging_mode = 1;
-			retval = xcrun_main(argc, argv);
+			return xcrun_main(argc, argv);
 			break;
 		case 3: /* xcrun_verbose */
 			verbose_mode = 1;
-			retval = xcrun_main(argc, argv);
+			return xcrun_main(argc, argv);
 			break;
 		case 4: /* xcrun_nocache */
-			retval = xcrun_main(argc, argv);
+			return xcrun_main(argc, argv);
 			break;
 		case -1:
 		default: /* called as tool name */
 			/* Locate and execute the command */
-			if (request_command(this_tool, argc, argv) != -1)
-				retval = -1; /* NOREACH */
-			else {
-				fprintf(stderr, "xcrun: error: failed to execute command \'%s\'. aborting.\n", this_tool);
-				exit(1);
+			if (request_command(progname, argc, argv) != -1) {
+				return 1; /* NOREACH */
+			} else {
+				fprintf(stderr, "xcrun: error: failed to execute command \'%s\'. aborting.\n", progname);
 			}
 			break;
 	}
 
-	return retval;
+	return 1;
 }
