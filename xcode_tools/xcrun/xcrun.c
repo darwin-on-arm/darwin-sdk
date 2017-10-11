@@ -709,6 +709,7 @@ static int search_command(char *buf, const char *name, char *dirs)
 		}
 
 		/* If not, move onto the next entry.. */
+		memset(cmd_absl_path, 0, PATH_MAX);
 		cmd_search_path = strtok(NULL, ":");
 	}
 
