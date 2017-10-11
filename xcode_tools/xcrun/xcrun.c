@@ -1051,7 +1051,7 @@ static int xcrun_main(int argc, char *argv[])
 			return 0;
 		} else {
 			fprintf(stderr, "xcrun: error: unable to locate command \'%s\' (%s)\n", tool_called, strerror(errno));
-			return 0;
+			return 1;
 		}
 	}
 
